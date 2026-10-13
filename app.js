@@ -212,8 +212,28 @@ document.addEventListener('visibilitychange',async()=>{
 /* ============================================================
    ACCESO
    ============================================================ */
+// Bloqueo del dispositivo. Es una cortina, no la seguridad real: los datos solo
+// se leen con usuario y PIN (reglas de Supabase). Se guarda el hash, no el código.
+const LOCK_HASH='0d998a49c98493e9f73c1411442294c52e6c8315cfcb16056a1bda42102e1f5d';
+async function sha256(s){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')}
+const desbloqueado=()=>lsGet('hc-dispositivo')===LOCK_HASH.slice(0,16);
+function mostrarBloqueo(){
+  $('app').hidden=true;$('login').hidden=true;$('lock').hidden=false;
+  $('k-pin').value='';$('k-err').textContent='';
+  setTimeout(()=>$('k-pin').focus(),50);
+}
+async function probarCodigo(){
+  const code=$('k-pin').value.trim();
+  if(await sha256('habitaciones|'+code)===LOCK_HASH){
+    lsSet('hc-dispositivo',LOCK_HASH.slice(0,16));
+    $('lock').hidden=true;iniciar();
+  }else{$('k-pin').value='';$('k-err').textContent='Código incorrecto.'}
+}
+$('lock-form').addEventListener('submit',e=>{e.preventDefault();probarCodigo()});
+$('k-pin').addEventListener('input',e=>{e.target.value=e.target.value.replace(/\D/g,'');$('k-err').textContent='';if(e.target.value.length===6)probarCodigo()});
+
 function mostrarLogin(){
-  $('app').hidden=true;$('login').hidden=false;$('setup-form').hidden=true;$('login-form').hidden=false;
+  $('app').hidden=true;$('lock').hidden=true;$('login').hidden=false;
   const u=lsGet('hc-usuario');
   $('l-user-box').hidden=!!u;$('l-known').hidden=!u;$('l-known-name').textContent=u||'';
   $('l-pin').value='';$('l-err').textContent='';
@@ -259,23 +279,6 @@ $('l-pin').addEventListener('input',e=>{
   if(n&&e.target.value.length===n&&lsGet('hc-usuario'))entrar();
 });
 $('l-change').addEventListener('click',()=>{lsSet('hc-usuario',null);lsSet('hc-pinlen',null);mostrarLogin()});
-$('l-setup-link').addEventListener('click',()=>{$('login-form').hidden=true;$('setup-form').hidden=false;$('s-nombre').focus()});
-$('s-back').addEventListener('click',mostrarLogin);
-$('setup-form').addEventListener('submit',async e=>{
-  e.preventDefault();
-  const nombre=$('s-nombre').value.trim(),usuario=$('s-user').value.trim().toLowerCase(),pin=$('s-pin').value.trim();
-  const err=$('s-err');err.textContent='';
-  if(!nombre){err.textContent='Escribe tu nombre.';return}
-  if(!/^[a-z0-9._-]{2,30}$/.test(usuario)){err.textContent='El usuario solo puede tener minúsculas, números, punto o guion.';return}
-  if(!/^\d{4,6}$/.test(pin)){err.textContent='El PIN debe tener de 4 a 6 números.';return}
-  if(pin!==$('s-pin2').value.trim()){err.textContent='Los PIN no coinciden.';return}
-  const r=await fn('usuarios',{accion:'inicial',nombre,usuario,pin});
-  if(r.error){err.textContent=r.error==='ya_inicializado'?'El administrador ya fue creado. Entra con tu usuario y PIN.':'No se pudo crear: '+r.error;return}
-  const {error}=await sb.auth.signInWithPassword({email:emailDe(usuario),password:claveDe(pin)});
-  if(error){err.textContent='Se creó el usuario, pero no se pudo entrar. Inténtalo desde la pantalla de acceso.';return}
-  lsSet('hc-usuario',usuario);lsSet('hc-pinlen',String(pin.length));
-  await iniciar();
-});
 sb.auth.onAuthStateChange(ev=>{if(ev==='SIGNED_OUT'&&S.yo){S.yo=null;mostrarLogin()}});
 
 /* ============================================================
@@ -519,6 +522,7 @@ function tenantForm(tid,roomNum){
    <div class="grid2"><div class="field"><label for="t-ing">Fecha de ingreso</label><input id="t-ing" type="date" required value="${esc(ing)}"></div>
    <div class="field"><label for="t-dia">Día de pago</label><input id="t-dia" type="number" min="1" max="31" required inputmode="numeric" value="${esc(t?t.dia_pago:+ing.slice(8))}"></div></div>
    <div class="field"><label for="t-gar">Garantía (S/)</label><input id="t-gar" type="number" min="0" step="0.01" inputmode="decimal" value="${esc(t&&+t.garantia?t.garantia:'')}" placeholder="0"></div>
+   ${t?'':`<div class="field"><label for="t-met">Pago del primer mes</label><select id="t-met">${METODOS.map(m=>`<option>${m}</option>`).join('')}</select><span class="hint">El primer mes se registra como pagado, por el monto mensual y con la fecha de ingreso.</span></div>`}
    <div class="field"><label for="t-notas">Datos extra</label><textarea id="t-notas" placeholder="Contacto de emergencia, referencias…">${esc(t?t.notas:'')}</textarea><span class="hint">Para incidentes con fecha usa la bitácora de su ficha.</span></div>
    <button class="btn primary" id="t-save">${t?'Guardar cambios':'Registrar inquilino'}</button></form>`,t?null:'#t-dni');
 }
@@ -623,8 +627,18 @@ const FORMS={
     const btn=$('t-save');btn.disabled=true;
     const row=old?await run(sb.from('inquilinos').update(d).eq('id',id).select().single(),'Datos guardados')
                  :await run(sb.from('inquilinos').insert(d).select().single(),'Inquilino registrado');
+    if(row&&row!==true){
+      upsertLocal('inquilinos',row);
+      // Nadie se registra sin pagar: el primer mes queda pagado
+      if(!old&&d.monto>0){
+        const pago=await run(sb.from('pagos').insert({inquilino_id:row.id,habitacion:row.habitacion,periodo:d.fecha_ingreso.slice(0,7),
+          monto:d.monto,fecha:d.fecha_ingreso,metodo:val('t-met')||'Efectivo',nota:'Primer mes, al registrar'}).select().single());
+        if(pago&&pago!==true)upsertLocal('pagos',pago);
+        else toast('El inquilino quedó registrado, pero no su primer pago. Regístralo desde su ficha.');
+      }
+      render();tenantSheet(row.id);
+    }
     btn.disabled=false;
-    if(row&&row!==true){upsertLocal('inquilinos',row);render();tenantSheet(row.id)}
   },
   async pago(){
     const tid=val('p-inq'),t=tenantById(tid),monto=r2(val('p-monto'));
@@ -777,5 +791,5 @@ async function exportar(){
    ARRANQUE
    ============================================================ */
 setInterval(()=>{const h=hoyStr();if(h!==HOY){HOY=h;if(S.yo&&S.view!=='ajustes')render()}},60000);
-iniciar();
+if(desbloqueado())iniciar();else mostrarBloqueo();
 })();
