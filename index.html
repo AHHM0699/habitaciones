@@ -18,25 +18,13 @@
 </head>
 <body>
 
-<!-- Bloqueo del dispositivo: se pide una sola vez por celular o computadora -->
+<!-- Pantalla de bloqueo: único acceso, se pide una vez por dispositivo -->
 <section id="lock" class="login" hidden>
   <form class="panel" id="lock-form" autocomplete="off">
     <div class="brand"><span class="minitag">01</span><div><h1>Habitaciones y Cobros</h1><div class="who">Acceso restringido</div></div></div>
     <div class="field"><label for="k-pin">Código de acceso</label><input id="k-pin" class="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="••••••"></div>
     <p class="err" id="k-err" role="alert"></p>
     <button class="btn primary">Desbloquear</button>
-  </form>
-</section>
-
-<!-- Acceso con usuario y PIN -->
-<section id="login" class="login" hidden>
-  <form class="panel" id="login-form" autocomplete="on">
-    <div class="brand"><span class="minitag">01</span><div><h1>Habitaciones y Cobros</h1><div class="who">Entra con tu usuario y tu PIN</div></div></div>
-    <div class="field" id="l-user-box"><label for="l-user">Usuario</label><input id="l-user" autocapitalize="none" autocomplete="username" spellcheck="false" placeholder="ej. mama"></div>
-    <div class="field" id="l-known" hidden><label>Usuario</label><div class="row" style="align-items:center"><b id="l-known-name" style="flex:1"></b><button type="button" class="linkbtn" id="l-change">Cambiar</button></div></div>
-    <div class="field"><label for="l-pin">PIN</label><input id="l-pin" class="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="current-password" placeholder="••••"></div>
-    <p class="err" id="l-err" role="alert"></p>
-    <button class="btn primary" id="l-btn">Entrar</button>
   </form>
 </section>
 

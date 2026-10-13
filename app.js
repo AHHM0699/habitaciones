@@ -6,10 +6,9 @@
    ============================================================ */
 const SUPABASE_URL='https://uscgdhqfpzopyzoeydjn.supabase.co';
 const SUPABASE_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVzY2dkaHFmcHpvcHl6b2V5ZGpuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE5MDc5MTIsImV4cCI6MjEwNzQ4MzkxMn0.nMwX0UnNj2mo-j_NmlXDhSpARxKXtFrVXKUuShRIFkU';
-// Debe coincidir con la función "usuarios": el PIN se convierte en la contraseña de Supabase Auth
+// Debe coincidir con la función "usuarios": el código de bloqueo es la contraseña de la cuenta compartida
 const DOMINIO='usuarios.habitaciones.app';
-const emailDe=u=>u+'@'+DOMINIO;
-const claveDe=pin=>'hab#'+pin+'#pin';
+const claveDe=code=>'hab#'+code+'#pin';
 const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:true,autoRefreshToken:true,storageKey:'hc-sesion'}});
 
 /* ============================================================
@@ -53,7 +52,6 @@ const roomByNum=n=>S.rooms.find(r=>r.numero===+n);
 const roomNo=n=>n?pad(n):'—';
 const tenantById=id=>S.tenants.find(t=>t.id===id);
 const perfilNombre=id=>{const p=S.perfiles.find(x=>x.id===id);return p?p.nombre:'Otra persona'};
-const esAdmin=()=>!!(S.yo&&S.yo.rol==='admin');
 function waPhone(c){let d=String(c||'').replace(/\D/g,'');if(d.length===9)d='51'+d;return d.length>=10?d:''}
 function titleCase(s){const low=['de','del','la','las','los','y'];return String(s||'').toLowerCase().split(/\s+/).filter(Boolean).map((w,i)=>i&&low.includes(w)?w:w.charAt(0).toUpperCase()+w.slice(1)).join(' ')}
 function lsGet(k){try{return localStorage.getItem(k)}catch(e){return null}}
@@ -210,76 +208,51 @@ document.addEventListener('visibilitychange',async()=>{
 });
 
 /* ============================================================
-   ACCESO
+   ACCESO: solo la pantalla de bloqueo
    ============================================================ */
-// Bloqueo del dispositivo. Es una cortina, no la seguridad real: los datos solo
-// se leen con usuario y PIN (reglas de Supabase). Se guarda el hash, no el código.
-const LOCK_HASH='0d998a49c98493e9f73c1411442294c52e6c8315cfcb16056a1bda42102e1f5d';
-async function sha256(s){const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')}
-const desbloqueado=()=>lsGet('hc-dispositivo')===LOCK_HASH.slice(0,16);
+// El código abre una cuenta compartida en Supabase; sin ella las reglas del
+// servidor no devuelven ningún dato. Se pide una vez por dispositivo.
+const EMAIL_CASA='casa@'+DOMINIO;
 function mostrarBloqueo(){
-  $('app').hidden=true;$('login').hidden=true;$('lock').hidden=false;
-  $('k-pin').value='';$('k-err').textContent='';
+  $('app').hidden=true;$('lock').hidden=false;
+  $('k-pin').value='';$('k-err').textContent='';$('k-pin').disabled=false;
   setTimeout(()=>$('k-pin').focus(),50);
 }
 async function probarCodigo(){
   const code=$('k-pin').value.trim();
-  if(await sha256('habitaciones|'+code)===LOCK_HASH){
-    lsSet('hc-dispositivo',LOCK_HASH.slice(0,16));
-    $('lock').hidden=true;iniciar();
-  }else{$('k-pin').value='';$('k-err').textContent='Código incorrecto.'}
+  if(!/^\d{6}$/.test(code)){$('k-err').textContent='El código tiene 6 números.';return}
+  $('k-pin').disabled=true;$('k-err').textContent='Verificando…';
+  const {error}=await sb.auth.signInWithPassword({email:EMAIL_CASA,password:claveDe(code)});
+  $('k-pin').disabled=false;
+  if(error){
+    $('k-pin').value='';$('k-pin').focus();
+    $('k-err').textContent=/rate|many/i.test(error.message)?'Demasiados intentos. Espera unos minutos.':/fetch|network/i.test(error.message)?'Sin conexión. Revisa tu internet.':'Código incorrecto.';
+    return;
+  }
+  await iniciar();
 }
 $('lock-form').addEventListener('submit',e=>{e.preventDefault();probarCodigo()});
 $('k-pin').addEventListener('input',e=>{e.target.value=e.target.value.replace(/\D/g,'');$('k-err').textContent='';if(e.target.value.length===6)probarCodigo()});
 
-function mostrarLogin(){
-  $('app').hidden=true;$('lock').hidden=true;$('login').hidden=false;
-  const u=lsGet('hc-usuario');
-  $('l-user-box').hidden=!!u;$('l-known').hidden=!u;$('l-known-name').textContent=u||'';
-  $('l-pin').value='';$('l-err').textContent='';
-  setTimeout(()=>(u?$('l-pin'):$('l-user')).focus(),50);
-}
-async function entrar(){
-  const usuario=(lsGet('hc-usuario')||$('l-user').value).trim().toLowerCase(),pin=$('l-pin').value.trim();
-  $('l-err').textContent='';
-  if(!usuario){$('l-err').textContent='Escribe tu usuario.';return}
-  if(!/^\d{4,6}$/.test(pin)){$('l-err').textContent='El PIN tiene de 4 a 6 números.';return}
-  $('l-btn').disabled=true;$('l-btn').textContent='Entrando…';
-  const {error}=await sb.auth.signInWithPassword({email:emailDe(usuario),password:claveDe(pin)});
-  $('l-btn').disabled=false;$('l-btn').textContent='Entrar';
-  if(error){
-    $('l-pin').value='';
-    $('l-err').textContent=/banned/i.test(error.message)?'Este usuario está desactivado.':/rate|many/i.test(error.message)?'Demasiados intentos. Espera unos minutos.':'Usuario o PIN incorrecto.';
-    return;
-  }
-  lsSet('hc-usuario',usuario);lsSet('hc-pinlen',String(pin.length));
-  await iniciar();
-}
 async function iniciar(){
   const {data:{session}}=await sb.auth.getSession();
-  if(!session){mostrarLogin();return}
+  if(!session){mostrarBloqueo();return}
   const {data:yo}=await sb.from('perfiles').select('*').eq('id',session.user.id).maybeSingle();
-  if(!yo||!yo.activo){await sb.auth.signOut();mostrarLogin();$('l-err').textContent='Este usuario no tiene acceso.';return}
+  if(!yo||!yo.activo){await sb.auth.signOut();mostrarBloqueo();return}
   S.yo=yo;
-  $('login').hidden=true;$('app').hidden=false;
+  $('lock').hidden=true;$('app').hidden=false;
   const v=lsGet('hc-view');if(v&&v!=='ajustes')S.view=v;
   render();
   try{await cargar()}catch(e){toast(errMsg(e))}
   escuchar();render();
 }
-async function salir(){
+async function bloquear(){
   if(canal){sb.removeChannel(canal);canal=null}
+  S.yo=null;S.loaded=false;closeSheet();
   await sb.auth.signOut();
-  S.yo=null;S.loaded=false;closeSheet();mostrarLogin();
+  mostrarBloqueo();
 }
-$('login-form').addEventListener('submit',e=>{e.preventDefault();entrar()});
-$('l-pin').addEventListener('input',e=>{
-  e.target.value=e.target.value.replace(/\D/g,'');
-  const n=+lsGet('hc-pinlen');
-  if(n&&e.target.value.length===n&&lsGet('hc-usuario'))entrar();
-});
-$('l-change').addEventListener('click',()=>{lsSet('hc-usuario',null);lsSet('hc-pinlen',null);mostrarLogin()});
-sb.auth.onAuthStateChange(ev=>{if(ev==='SIGNED_OUT'&&S.yo){S.yo=null;mostrarLogin()}});
+sb.auth.onAuthStateChange(ev=>{if(ev==='SIGNED_OUT'&&S.yo){S.yo=null;mostrarBloqueo()}});
 
 /* ============================================================
    VISTAS
@@ -289,7 +262,7 @@ function render(){
   const c=cfg();
   $('h-title').textContent=c.nombre||'Habitaciones y Cobros';
   const occ=S.tenants.filter(t=>t.activo).length;
-  $('h-sub').textContent=!S.loaded?'Cargando datos…':`${S.rooms.length} habitaciones · ${occ} ocupadas · ${S.yo?S.yo.nombre:''}`;
+  $('h-sub').textContent=!S.loaded?'Cargando datos…':`${S.rooms.length} habitaciones · ${occ} ocupadas`;
   document.querySelectorAll('.nav button').forEach(b=>{if(b.dataset.view===S.view)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current')});
   const el=$('view');
   const ae=document.activeElement,aeId=ae&&el.contains(ae)?ae.id:null,aeSel=aeId&&ae.selectionStart!=null?ae.selectionStart:null;
@@ -412,13 +385,12 @@ V.inquilinos=function(){
 };
 
 V.ajustes=function(){
-  const c=cfg(),yo=S.yo||{};
+  const c=cfg();
   return `<div class="stack">
-  <section class="panel stack"><h2>Mi cuenta</h2>
-   <div class="row" style="align-items:center"><div style="flex:1;min-width:0"><b>${esc(yo.nombre)}</b><div class="who">Usuario: ${esc(yo.usuario)} · ${yo.rol==='admin'?'Administrador':'Usuario'}</div></div></div>
-   <div class="row"><button class="btn" data-act="miPin">Cambiar mi PIN</button><button class="btn danger" data-act="salir">Cerrar sesión</button></div>
+  <section class="panel stack"><h2>Este dispositivo</h2>
+   <p class="muted" style="margin:0;font-size:13px">Este celular o computadora ya está desbloqueado. Bloquéalo si lo vas a prestar o si alguien más lo usa: para volver a entrar se pedirá el código.</p>
+   <div class="row"><button class="btn danger" data-act="bloquear">Bloquear este dispositivo</button></div>
   </section>
-  ${esAdmin()?usuariosPanel():''}
   <form class="panel stack" data-form="config"><h2>General</h2>
    <div class="field"><label for="c-nombre">Nombre del inmueble</label><input id="c-nombre" value="${esc(c.nombre)}" placeholder="Ej. Casa Los Olivos"></div>
    <div class="grid2 adapt"><div class="field"><label for="c-yape">Número de Yape / Plin</label><input id="c-yape" value="${esc(c.yape)}" inputmode="tel" placeholder="9XX XXX XXX"></div>
@@ -438,16 +410,6 @@ V.ajustes=function(){
   </form>
   </div>`;
 };
-function usuariosPanel(){
-  const us=[...S.perfiles].sort((a,b)=>(b.activo-a.activo)||a.nombre.localeCompare(b.nombre));
-  return `<section class="panel stack"><div class="sec-h" style="margin:0"><h2>Usuarios</h2><button class="btn small primary" data-act="userForm">+ Nuevo usuario</button></div>
-   <p class="muted" style="margin:0;font-size:13px">Cada persona entra con su usuario y su PIN. Si alguien deja de trabajar contigo, desactívalo: pierde el acceso al instante.</p>
-   <div class="users">${us.map(u=>`<div class="user${u.activo?'':' off'}"><div class="main"><b>${esc(u.nombre)}</b><span class="who">${esc(u.usuario)}${u.id===S.yo.id?' · tú':''}</span></div>
-    ${u.rol==='admin'?'<span class="badge">Admin</span>':''}${u.activo?'':'<span class="badge">Desactivado</span>'}
-    ${u.id!==S.yo.id?`<button class="btn small" data-act="userEdit" data-id="${esc(u.id)}">Gestionar</button>`:''}</div>`).join('')}</div>
-  </section>`;
-}
-
 /* ============================================================
    HOJAS (VENTANAS)
    ============================================================ */
@@ -567,25 +529,6 @@ function pagoSheet(id){
   });
 }
 
-function userForm(){
-  openSheet(sheetHead('Nuevo usuario')+`<form class="stack" data-form="nuevoUsuario">
-   <div class="field"><label for="u-nombre">Nombre</label><input id="u-nombre" placeholder="Ej. Mamá"></div>
-   <div class="field"><label for="u-user">Usuario</label><input id="u-user" autocapitalize="none" spellcheck="false" placeholder="Ej. mama"><span class="hint">Minúsculas, sin espacios ni tildes. Con esto entra a la app.</span></div>
-   <div class="grid2"><div class="field"><label for="u-pin">PIN (4 a 6 números)</label><input id="u-pin" class="pin" inputmode="numeric" maxlength="6"></div>
-   <div class="field"><label for="u-rol">Permisos</label><select id="u-rol"><option value="usuario">Usuario</option><option value="admin">Administrador</option></select></div></div>
-   <p class="muted" style="margin:0;font-size:13px">Los usuarios pueden registrar inquilinos, pagos y notas. Solo el administrador gestiona los usuarios.</p>
-   <button class="btn primary" id="u-save">Crear usuario</button></form>`,'#u-nombre');
-}
-function userEdit(id){
-  const u=S.perfiles.find(x=>x.id===id);if(!u)return;
-  openSheet(sheetHead(esc(u.nombre),'Usuario: '+esc(u.usuario))+`<div class="stack">
-   <form class="stack" data-form="pinUsuario" data-id="${esc(u.id)}"><div class="field"><label for="ue-pin">Nuevo PIN</label><input id="ue-pin" class="pin" inputmode="numeric" maxlength="6"></div><button class="btn">Cambiar PIN</button></form>
-   <div class="row"><button class="btn" data-act="userRol" data-id="${esc(u.id)}">${u.rol==='admin'?'Quitar administrador':'Hacer administrador'}</button>
-   <button class="btn ${u.activo?'danger':'primary'}" data-act="userActivo" data-id="${esc(u.id)}">${u.activo?'Desactivar acceso':'Reactivar acceso'}</button></div></div>`);
-}
-const ERR_U={usuario_invalido:'El usuario solo puede tener minúsculas, números, punto o guion (2 a 30).',pin_invalido:'El PIN debe tener de 4 a 6 números.',usuario_existe:'Ese usuario ya existe.',nombre_requerido:'Escribe el nombre.',solo_admin:'Solo el administrador puede hacer esto.',red:'Sin conexión. Inténtalo otra vez.'};
-const errU=e=>ERR_U[e]||('No se pudo completar: '+e);
-async function recargarPerfiles(){try{S.perfiles=await fetchAll('perfiles','creado')}catch(e){}render()}
 
 /* ============================================================
    IMÁGENES
@@ -662,25 +605,6 @@ const FORMS={
     if(!texto){toast('Escribe la nota.');$('n-texto').focus();return}
     const row=await run(sb.from('notas').insert({inquilino_id:tid,fecha,texto}).select().single(),'Nota agregada');
     if(row&&row!==true){upsertLocal('notas',row);tenantSheet(tid,true);schedule()}
-  },
-  async nuevoUsuario(){
-    const body={accion:'crear',nombre:val('u-nombre'),usuario:val('u-user').toLowerCase(),pin:val('u-pin'),rol:val('u-rol')};
-    const btn=$('u-save');btn.disabled=true;
-    const r=await fn('usuarios',body);btn.disabled=false;
-    if(r.error){toast(errU(r.error));return}
-    closeSheet();toast('Usuario creado. Entra con “'+body.usuario+'” y su PIN.');recargarPerfiles();
-  },
-  async pinUsuario(f){
-    const r=await fn('usuarios',{accion:'pin',id:f.dataset.id,pin:val('ue-pin')});
-    if(r.error){toast(errU(r.error));return}
-    closeSheet();toast('PIN cambiado');
-  },
-  async miPin(){
-    const pin=val('mp-pin');
-    if(pin!==val('mp-pin2')){toast('Los PIN no coinciden.');return}
-    const r=await fn('usuarios',{accion:'mi_pin',pin});
-    if(r.error){toast(errU(r.error));return}
-    lsSet('hc-pinlen',String(pin.length));closeSheet();toast('Tu PIN fue cambiado');
   }
 };
 
@@ -699,14 +623,7 @@ const ACTS={
   calMove(b){S.calP=pAdd(S.calP||curP(),+b.dataset.d);S.calDay=null;render()},
   calDay(b){S.calDay=b.dataset.day;render()},
   export(){exportar()},
-  salir(){salir()},
-  userForm(){userForm()},
-  userEdit(b){userEdit(b.dataset.id)},
-  miPin(){openSheet(sheetHead('Cambiar mi PIN')+`<form class="stack" data-form="miPin"><div class="grid2"><div class="field"><label for="mp-pin">Nuevo PIN</label><input id="mp-pin" class="pin" type="password" inputmode="numeric" maxlength="6"></div><div class="field"><label for="mp-pin2">Repítelo</label><input id="mp-pin2" class="pin" type="password" inputmode="numeric" maxlength="6"></div></div><button class="btn primary">Guardar PIN</button></form>`,'#mp-pin')},
-  async userRol(b){const u=S.perfiles.find(x=>x.id===b.dataset.id);const r=await fn('usuarios',{accion:'editar',id:u.id,rol:u.rol==='admin'?'usuario':'admin'});if(r.error){toast(errU(r.error));return}closeSheet();toast('Permisos actualizados');recargarPerfiles()},
-  userActivo(b){const u=S.perfiles.find(x=>x.id===b.dataset.id);
-    const go=async()=>{const r=await fn('usuarios',{accion:'editar',id:u.id,activo:!u.activo});if(r.error){toast(errU(r.error));return}closeSheet();toast(u.activo?'Acceso desactivado':'Acceso reactivado');recargarPerfiles()};
-    if(u.activo)confirmSheet('Desactivar acceso',`${esc(u.nombre)} ya no podrá entrar a la app. Lo que registró se conserva.`,'Desactivar',go);else go()},
+  bloquear(){bloquear()},
   async buscarDni(){
     const dni=val('t-dni').replace(/\D/g,'');
     if(dni.length!==8){toast('El DNI debe tener 8 números.');return}
@@ -791,5 +708,5 @@ async function exportar(){
    ARRANQUE
    ============================================================ */
 setInterval(()=>{const h=hoyStr();if(h!==HOY){HOY=h;if(S.yo&&S.view!=='ajustes')render()}},60000);
-if(desbloqueado())iniciar();else mostrarBloqueo();
+iniciar();
 })();
