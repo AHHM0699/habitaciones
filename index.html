@@ -4,11 +4,23 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Habitaciones y Cobros</title>
-<meta name="theme-color" content="#0E5A50">
+<meta name="theme-color" content="#091D40">
 <meta name="robots" content="noindex,nofollow">
+<meta name="description" content="Control de habitaciones: inquilinos, pagos, vencimientos y recordatorios por WhatsApp.">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" href="favicon-32.png" type="image/png" sizes="32x32">
+<link rel="icon" href="icon-192.png" type="image/png" sizes="192x192">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Habitaciones y Cobros">
+<meta property="og:description" content="Inquilinos, pagos y recordatorios">
+<meta property="og:url" content="https://ahhm0699.github.io/habitaciones/">
+<meta property="og:image" content="https://ahhm0699.github.io/habitaciones/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://ahhm0699.github.io/habitaciones/og-image.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Habitaciones">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -21,7 +33,7 @@
 <!-- Pantalla de bloqueo: único acceso, se pide una vez por dispositivo -->
 <section id="lock" class="login" hidden>
   <form class="panel" id="lock-form" autocomplete="off">
-    <div class="brand"><span class="minitag">01</span><div><h1>Habitaciones y Cobros</h1><div class="who">Acceso restringido</div></div></div>
+    <div class="brand"><img src="icon-192.png" alt="" width="56" height="56" style="border-radius:12px;flex:none"><div><h1>Habitaciones y Cobros</h1><div class="who">Acceso restringido</div></div></div>
     <div class="field"><label for="k-pin">Código de acceso</label><input id="k-pin" class="pin" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="••••••"></div>
     <p class="err" id="k-err" role="alert"></p>
     <button class="btn primary">Desbloquear</button>
