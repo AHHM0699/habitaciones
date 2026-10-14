@@ -96,6 +96,8 @@ a{color:var(--accent)}
 .tag-no{font:700 22px/1 var(--f-mono);color:var(--ink);letter-spacing:-.04em}
 .tag-name{font-size:12px;color:var(--ink-2);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-inline:2px}
 .tag .pill{font-size:10.5px;padding:2px 6px}
+.tag-obs{position:absolute;top:4px;right:6px;font-size:13px;line-height:1}
+.obs-txt{white-space:pre-line}
 .tag.s-libre{border-style:dashed;background:var(--surface)}
 .legend{display:flex;flex-wrap:wrap;gap:6px}
 

@@ -16,7 +16,7 @@ const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSe
    ============================================================ */
 const MESES=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
 const MES3=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
-const DEFAULTS={nombre:'',yape:'999 663869',dias_aviso:3,precio_base:350,
+const DEFAULTS={nombre:'',yape:'999663869',dias_aviso:3,precio_base:350,
   t_recordatorio:'Hola {nombre}, te recuerdo que el alquiler de la habitación {habitacion} de {mes} (S/ {monto}) vence el {fecha}. Puedes pagar por Yape al {yape} (a nombre de Liliana Montenegro Fiestas). ¡Gracias!',
   t_vencido:'Hola {nombre}, el alquiler de la habitación {habitacion} venció el {fecha} y lleva {dias} días de atraso. El monto pendiente es S/ {deuda}. Por favor regulariza tu pago lo antes posible. Yape: {yape} (a nombre de Liliana Montenegro Fiestas). Gracias.',
   t_gracias:'Hola {nombre}, confirmo que recibí tu pago de S/ {pago} por la habitación {habitacion} ({mes}). ¡Gracias!'};
@@ -323,9 +323,17 @@ V.cuartos=function(){
     const t=ROOMT.get(r.numero),st=t&&ST.get(t.id),e=st?st.estado:'libre';
     const short=st?(e==='vencido'?st.dias+' d':e==='porVencer'?fmtD(st.ref.due):e==='hoy'?'Hoy':'Al día'):'Libre';
     return `<button class="tag s-${e}" data-act="room" data-id="${r.numero}" aria-label="Habitación ${pad(r.numero)}, ${esc(t?t.nombre:'libre')}, ${esc(statusText(st))}">
-      <span class="tag-no">${pad(r.numero)}</span><span class="tag-name">${esc(t?(t.nombre||'').split(/\s+/)[0]:'S/ '+fmtN(r.precio))}</span>${pill(e,short)}</button>`}).join('')}</div>
-  <p class="muted" style="font-size:13px;margin:0">Toca una habitación para ver al inquilino, su deuda, su bitácora y sus pagos.</p></div>`;
+      <span class="tag-no">${pad(r.numero)}</span><span class="tag-name">${esc(t?(t.nombre||'').split(/\s+/)[0]:'S/ '+fmtN(r.precio))}</span>${pill(e,short)}${!t&&r.observaciones?'<span class="tag-obs" title="Tiene observaciones">🔧</span>':''}</button>`}).join('')}</div>
+  ${obsList()}
+  <p class="muted" style="font-size:13px;margin:0">Toca una habitación para ver al inquilino, su deuda, su bitácora y sus pagos. En las libres puedes anotar observaciones (pintura, focos, arreglos).</p></div>`;
 };
+
+function obsList(){
+  const rs=S.rooms.filter(r=>!ROOMT.get(r.numero)&&r.observaciones);
+  if(!rs.length)return '';
+  return `<div class="sec-h"><h2>Pendientes en habitaciones libres</h2><span class="muted" style="font-size:13px">${rs.length}</span></div>
+  <div class="list">${rs.map(r=>`<div class="item"><span class="minitag">${pad(r.numero)}</span><button class="main" data-act="room" data-id="${r.numero}"><div class="name">Habitación ${pad(r.numero)}</div><div class="sub obs-txt">${esc(r.observaciones)}</div></button></div>`).join('')}</div>`;
+}
 
 V.calendario=function(){
   const p=S.calP||curP(),[y,m]=p.split('-').map(Number),T=dn(HOY),aviso=+cfg().dias_aviso||0;
@@ -430,7 +438,10 @@ function roomSheet(num){
   const t=ROOMT.get(r.numero);
   if(t)return tenantSheet(t.id);
   openSheet(sheetHead('Habitación '+pad(r.numero),'Libre · '+money(r.precio)+' al mes')+
-   `<div class="row"><button class="btn primary" data-act="tenantForm" data-room="${r.numero}">Registrar inquilino aquí</button></div>`);
+   `<form class="stack" data-form="obs" data-id="${r.numero}" style="margin-bottom:16px">
+    <div class="field"><label for="o-texto">Observaciones</label><textarea id="o-texto" placeholder="Ej.: falta pintar, cambiar focos, arreglar la chapa…">${esc(r.observaciones)}</textarea><span class="hint">Arreglos o pendientes antes de alquilarla.</span></div>
+    <div class="row"><button class="btn">Guardar observaciones</button></div></form>
+   <div class="row"><button class="btn primary" data-act="tenantForm" data-room="${r.numero}">Registrar inquilino aquí</button></div>`);
 }
 function tenantSheet(tid,keepScroll){
   const t=tenantById(tid);if(!t)return closeSheet();
@@ -560,6 +571,11 @@ const FORMS={
     if(!ch.length){toast('No hay cambios de precio.');return}
     const rows=await run(sb.from('habitaciones').upsert(ch.map(x=>({numero:x.n,precio:x.p}))).select(),'Precios guardados');
     if(Array.isArray(rows)){rows.forEach(r=>upsertLocal('habitaciones',r));render()}
+  },
+  async obs(f){
+    const n=+f.dataset.id,observaciones=val('o-texto');
+    const row=await run(sb.from('habitaciones').update({observaciones}).eq('numero',n).select().single(),observaciones?'Observaciones guardadas':'Observaciones borradas');
+    if(row&&row!==true){upsertLocal('habitaciones',row);render();roomSheet(n)}
   },
   async tenant(f){
     const id=f.dataset.id,old=id?tenantById(id):null;
