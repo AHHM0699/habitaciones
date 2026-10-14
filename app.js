@@ -16,9 +16,9 @@ const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSe
    ============================================================ */
 const MESES=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
 const MES3=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
-const DEFAULTS={nombre:'',yape:'',dias_aviso:3,precio_base:350,
-  t_recordatorio:'Hola {nombre}, te recuerdo que el alquiler de la habitación {habitacion} de {mes} (S/ {monto}) vence el {fecha}. Puedes pagar por Yape o Plin al {yape}. ¡Gracias!',
-  t_vencido:'Hola {nombre}, el alquiler de la habitación {habitacion} venció el {fecha} y lleva {dias} días de atraso. El monto pendiente es S/ {deuda}. Por favor regulariza tu pago lo antes posible. Yape o Plin: {yape}. Gracias.',
+const DEFAULTS={nombre:'',yape:'999 663869',dias_aviso:3,precio_base:350,
+  t_recordatorio:'Hola {nombre}, te recuerdo que el alquiler de la habitación {habitacion} de {mes} (S/ {monto}) vence el {fecha}. Puedes pagar por Yape al {yape} (a nombre de Liliana Montenegro Fiestas). ¡Gracias!',
+  t_vencido:'Hola {nombre}, el alquiler de la habitación {habitacion} venció el {fecha} y lleva {dias} días de atraso. El monto pendiente es S/ {deuda}. Por favor regulariza tu pago lo antes posible. Yape: {yape} (a nombre de Liliana Montenegro Fiestas). Gracias.',
   t_gracias:'Hola {nombre}, confirmo que recibí tu pago de S/ {pago} por la habitación {habitacion} ({mes}). ¡Gracias!'};
 const EST={vencido:{label:'Vencido',icon:'▲',ord:0},hoy:{label:'Vence hoy',icon:'●',ord:1},porVencer:{label:'Por vencer',icon:'◐',ord:2},alDia:{label:'Al día',icon:'✓',ord:3},libre:{label:'Libre',icon:'○',ord:4}};
 const METODOS=['Efectivo','Yape','Plin','Transferencia','Otro'];
@@ -393,7 +393,7 @@ V.ajustes=function(){
   </section>
   <form class="panel stack" data-form="config"><h2>General</h2>
    <div class="field"><label for="c-nombre">Nombre del inmueble</label><input id="c-nombre" value="${esc(c.nombre)}" placeholder="Ej. Casa Los Olivos"></div>
-   <div class="grid2 adapt"><div class="field"><label for="c-yape">Número de Yape / Plin</label><input id="c-yape" value="${esc(c.yape)}" inputmode="tel" placeholder="9XX XXX XXX"></div>
+   <div class="grid2 adapt"><div class="field"><label for="c-yape">Número de Yape</label><input id="c-yape" value="${esc(c.yape)}" inputmode="tel" placeholder="9XX XXX XXX"></div>
    <div class="field"><label for="c-aviso">Avisar con (días de anticipación)</label><input id="c-aviso" type="number" min="0" max="31" value="${esc(c.dias_aviso)}" inputmode="numeric"></div></div>
    <div class="field"><label for="c-precio">Precio normal de una habitación (S/)</label><input id="c-precio" type="number" min="0" step="0.01" value="${esc(c.precio_base)}" inputmode="decimal"><span class="hint">Se usa como precio de las habitaciones nuevas.</span></div>
    <h2 style="margin-top:6px">Mensajes de WhatsApp</h2>
