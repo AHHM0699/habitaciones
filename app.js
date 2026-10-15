@@ -16,14 +16,14 @@ const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSe
    ============================================================ */
 const MESES=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
 const MES3=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
-const DEFAULTS={nombre:'',yape:'999663869',dias_aviso:3,precio_base:350,auto_activo:false,auto_previo:5,aviso_celular:'',
+const DEFAULTS={nombre:'',yape:'999663869',dias_aviso:3,precio_base:350,auto_activo:false,auto_previo:5,
   t_recordatorio:'Hola {nombre}, te recuerdo que el alquiler de la habitación {habitacion} de {mes} (S/ {monto}) vence el {fecha}. Puedes pagar por Yape al {yape} (a nombre de Liliana Montenegro Fiestas). ¡Gracias!',
   t_vencido:'Hola {nombre}, el alquiler de la habitación {habitacion} venció el {fecha} y lleva {dias} días de atraso. El monto pendiente es S/ {deuda}. Por favor regulariza tu pago lo antes posible. Yape: {yape} (a nombre de Liliana Montenegro Fiestas). Gracias.',
   t_gracias:'Hola {nombre}, confirmo que recibí tu pago de S/ {pago} por la habitación {habitacion} ({mes}). ¡Gracias!'};
 const EST={vencido:{label:'Vencido',icon:'▲',ord:0},hoy:{label:'Vence hoy',icon:'●',ord:1},porVencer:{label:'Por vencer',icon:'◐',ord:2},alDia:{label:'Al día',icon:'✓',ord:3},libre:{label:'Libre',icon:'○',ord:4}};
 const METODOS=['Efectivo','Yape','Plin','Transferencia','Otro'];
 
-const S={view:'inicio',config:null,rooms:[],tenants:[],pagos:[],notas:[],avisos:[],perfiles:[],yo:null,loaded:false,
+const S={view:'inicio',config:null,rooms:[],tenants:[],pagos:[],notas:[],avisos:[],estados:[],saldos:[],perfiles:[],yo:null,loaded:false,
   calP:null,calDay:null,pagP:null,showRet:false,q:'',shown:null};
 
 /* ============================================================
@@ -61,25 +61,23 @@ function lsSet(k,v){try{v==null?localStorage.removeItem(k):localStorage.setItem(
    CÁLCULO DE ESTADOS
    ============================================================ */
 let PAID=new Map(),ST=new Map(),ROOMT=new Map();
+// El estado de cada inquilino viene de Supabase (vistas estado_inquilinos y saldos_periodos):
+// todos los dispositivos y el bot de avisos ven exactamente lo mismo.
 function recompute(){
   PAID=new Map();
   for(const p of S.pagos){const k=p.inquilino_id+'|'+p.periodo;PAID.set(k,r2((PAID.get(k)||0)+(+p.monto||0)))}
+  const per=new Map(),est=new Map(S.estados.map(e=>[e.inquilino_id,e]));
+  for(const x of S.saldos){const a=per.get(x.inquilino_id)||[];a.push({p:x.periodo,due:dn(x.vence),pagado:+x.pagado||0,saldo:+x.saldo||0});per.set(x.inquilino_id,a)}
   ST=new Map();ROOMT=new Map();
-  for(const t of S.tenants){if(t.activo&&t.fecha_ingreso){ST.set(t.id,statusOf(t));ROOMT.set(t.habitacion,t)}}
-}
-function statusOf(t){
-  const T=dn(HOY),aviso=+cfg().dias_aviso||0,dia=Math.min(31,Math.max(1,+t.dia_pago||1)),monto=+t.monto||0,ing=dn(t.fecha_ingreso);
-  const per=[];let p=t.fecha_ingreso.slice(0,7);
-  for(let i=0;i<600;i++){
-    const due=Math.max(dueOf(p,dia),ing);if(due>T+62)break;
-    const pagado=PAID.get(t.id+'|'+p)||0;
-    per.push({p,due,pagado,saldo:Math.max(0,r2(monto-pagado))});p=pAdd(p,1);
+  for(const t of S.tenants){
+    if(!t.activo||!t.fecha_ingreso)continue;
+    ROOMT.set(t.habitacion,t);
+    const e=est.get(t.id);
+    if(e)ST.set(t.id,{estado:e.estado,deuda:+e.deuda||0,dias:+e.dias||0,T:dn(e.hoy),
+      per:(per.get(t.id)||[]).sort((a,b)=>a.due-b.due),
+      ref:e.ref_periodo?{p:e.ref_periodo,due:dn(e.ref_vence),saldo:+e.ref_saldo||0}:null,
+      prox:e.prox_periodo?{p:e.prox_periodo,due:dn(e.prox_vence),saldo:+e.prox_saldo||0}:null});
   }
-  const venc=per.filter(x=>x.due<T&&x.saldo>0),hoyP=per.find(x=>x.due===T&&x.saldo>0),prox=per.find(x=>x.due>T&&x.saldo>0);
-  let estado='alDia';
-  if(venc.length)estado='vencido';else if(hoyP)estado='hoy';else if(prox&&prox.due-T<=aviso)estado='porVencer';
-  const deuda=r2(venc.reduce((a,x)=>a+x.saldo,0)+(hoyP?hoyP.saldo:0));
-  return {estado,deuda,dias:venc.length?T-venc[0].due:0,per,ref:venc[0]||hoyP||prox||null,prox,T};
 }
 function esperado(p){
   let s=0;
@@ -181,9 +179,17 @@ async function fetchAll(table,order){
   }
   return out;
 }
+// Estado de cada inquilino, calculado en Supabase
+async function cargarEstados(){
+  const [e,s]=await Promise.all([sb.from('estado_inquilinos').select('*'),sb.from('saldos_periodos').select('*')]);
+  if(e.error)throw e.error;
+  if(s.error)throw s.error;
+  S.estados=e.data;S.saldos=s.data;
+}
+async function actualizarEstados(){try{await cargarEstados()}catch(e){toast(errMsg(e))}}
 async function cargar(){
   const desde=nstr(dn(hoyStr())-60);
-  const [c,h,i,p,n,u,a]=await Promise.all([
+  const [,c,h,i,p,n,u,a]=await Promise.all([cargarEstados(),
     sb.from('config').select('*').eq('id',1).maybeSingle().then(r=>{if(r.error)throw r.error;return r.data}),
     fetchAll('habitaciones','numero'),fetchAll('inquilinos','creado'),fetchAll('pagos','creado'),fetchAll('notas','creado'),fetchAll('perfiles','creado'),
     sb.from('avisos').select('*').gte('fecha',desde).order('creado',{ascending:false}).limit(500).then(r=>r.error?[]:r.data)]);
@@ -191,6 +197,10 @@ async function cargar(){
 }
 let canal=null,renderT=null;
 function schedule(){clearTimeout(renderT);renderT=setTimeout(()=>{if(S.view==='ajustes'&&S.shown==='ajustes')return;render()},60)}
+// Tras un cambio en inquilinos, pagos o ajustes hecho en otro dispositivo, pide el estado nuevo
+let estT=null;
+function refrescarEstados(){clearTimeout(estT);estT=setTimeout(async()=>{try{await cargarEstados()}catch(e){}schedule()},250)}
+const AFECTAN_ESTADO=['config','inquilinos','pagos'];
 function escuchar(){
   if(canal)sb.removeChannel(canal);
   canal=sb.channel('cambios');
@@ -198,7 +208,7 @@ function escuchar(){
     canal.on('postgres_changes',{event:'*',schema:'public',table},pl=>{
       if(pl.eventType==='DELETE'){if(table!=='config'&&pl.old)removeLocal(table,pl.old[PK[table]])}
       else upsertLocal(table,pl.new);
-      schedule();
+      if(AFECTAN_ESTADO.includes(table))refrescarEstados();else schedule();
     });
   }
   canal.subscribe();
@@ -279,7 +289,7 @@ function render(){
 V.inicio=function(){
   const p=curP(),esp=esperado(p),cob=cobrado(p),pct=esp?Math.min(100,Math.round(cob/esp*100)):0;
   const cnt={vencido:0,hoy:0,porVencer:0,alDia:0,libre:0};let deuda=0;
-  for(const r of S.rooms){const t=ROOMT.get(r.numero);if(!t){cnt.libre++;continue}const st=ST.get(t.id);cnt[st.estado]++;deuda+=st.deuda}
+  for(const r of S.rooms){const t=ROOMT.get(r.numero);if(!t){cnt.libre++;continue}const st=ST.get(t.id);if(!st)continue;cnt[st.estado]++;deuda+=st.deuda}
   const att=S.tenants.filter(t=>ST.has(t.id)&&ST.get(t.id).estado!=='alDia')
     .sort((a,b)=>{const x=ST.get(a.id),y=ST.get(b.id);return EST[x.estado].ord-EST[y.estado].ord||(x.estado==='vencido'?y.dias-x.dias:x.ref.due-y.ref.due)});
   return `<div class="stack">
@@ -307,11 +317,11 @@ function porConfirmar(){
    <p class="muted" style="margin:0;font-size:13px">Antes de enviar el aviso de atraso, confirma que el pago no llegó.</p>
    <div class="list">${ps.map(a=>{const t=tenantById(a.inquilino_id),st=ST.get(t.id);return `<div class="item col"><div class="item-top"><span class="minitag">${roomNo(t.habitacion)}</span>
     <button class="main" data-act="tenant" data-id="${esc(t.id)}"><div class="name">${esc(t.nombre)}</div><div class="sub">${pill('vencido',statusText(st))}<span class="num">Debe ${money(st.deuda)}</span></div></button></div>
-    <div class="row"><button class="btn small" data-act="avPago" data-id="${esc(a.id)}">Ya pagó</button><button class="btn small wa" data-act="avEnviar" data-id="${esc(a.id)}">Enviar aviso</button><button class="btn small" data-act="avOmitir" data-id="${esc(a.id)}">Hoy no</button></div></div>`}).join('')}</div>
+    <div class="row"><button class="btn small" data-act="avPago" data-id="${esc(a.id)}">Ya pagó</button>${waUrl(t,'vencido')?`<a class="btn small wa" href="${esc(waUrl(t,'vencido'))}" target="_blank" rel="noopener" data-act="avEnviado" data-id="${esc(a.id)}">Enviar aviso</a>`:'<span class="btn small off">Falta celular</span>'}<button class="btn small" data-act="avOmitir" data-id="${esc(a.id)}">Hoy no</button></div></div>`}).join('')}</div>
   </section>`;
 }
-const AV_TIPO={previo:'Días antes',hoy:'Vence hoy',vencido:'Atraso',dueno:'Aviso para ti'};
-const AV_EST={enviado:'Enviado',error:'No se envió',pendiente:'Por confirmar',pagado:'Ya pagó',descartado:'No enviado',caducado:'Sin respuesta'};
+const AV_TIPO={previo:'Días antes',hoy:'Vence hoy',vencido:'Atraso'};
+const AV_EST={enviado:'Enlace listo',error:'Sin enlace',pendiente:'Por confirmar',pagado:'Ya pagó',descartado:'No enviado',caducado:'Sin respuesta'};
 function itemRow(t){
   const st=ST.get(t.id);
   let sub=pill(st.estado,statusText(st));
@@ -405,7 +415,7 @@ V.inquilinos=function(){
   <div class="toolbar"><input id="iq-q" type="search" placeholder="Buscar por nombre, DNI, celular o habitación" value="${esc(S.q)}" data-act="buscar" aria-label="Buscar inquilino"><button class="btn primary" data-act="tenantForm">+ Nuevo inquilino</button></div>
   <label class="check"><input type="checkbox" id="iq-ret" data-act="toggleRet"${S.showRet?' checked':''}> Ver ex inquilinos</label>
   ${list.length?`<div class="list">${list.map(t=>{const st=ST.get(t.id);const nn=S.notas.filter(x=>x.inquilino_id===t.id).length;return `<div class="item"><span class="minitag">${roomNo(t.habitacion)}</span>
-   <button class="main" data-act="tenant" data-id="${esc(t.id)}"><div class="name">${esc(t.nombre)}</div><div class="sub">${st?pill(st.estado,statusText(st)):`<span>Salió el ${fmtS(t.fecha_salida)}</span>`}<span class="num">${money(t.monto)} · día ${esc(t.dia_pago)}</span>${nn?`<span>${nn} nota${nn>1?'s':''}</span>`:''}</div></button>
+   <button class="main" data-act="tenant" data-id="${esc(t.id)}"><div class="name">${esc(t.nombre)}</div><div class="sub">${st?pill(st.estado,statusText(st)):t.activo?'<span>Actualizando…</span>':`<span>Salió el ${fmtS(t.fecha_salida)}</span>`}<span class="num">${money(t.monto)} · día ${esc(t.dia_pago)}</span>${nn?`<span>${nn} nota${nn>1?'s':''}</span>`:''}</div></button>
    ${st?waAct(t):''}</div>`}).join('')}</div>`
   :`<div class="empty">${S.showRet?'No hay ex inquilinos.':q?'Ningún inquilino coincide con la búsqueda.':'Todavía no hay inquilinos registrados.'}</div>`}
   </div>`;
@@ -413,8 +423,8 @@ V.inquilinos=function(){
 
 function historialAvisos(){
   const as=S.avisos.filter(a=>a.estado!=='pendiente'||a.fecha!==HOY).slice(0,30);
-  return `<section class="panel stack"><h2>Últimos mensajes automáticos</h2>
-   ${as.length?`<ul class="avisos">${as.map(a=>{const t=a.inquilino_id&&tenantById(a.inquilino_id);return `<li><span class="meta"><b>${fmtS(a.fecha)}</b> · ${esc(AV_TIPO[a.tipo]||a.tipo)}</span><span>${esc(t?t.nombre+' · hab. '+roomNo(t.habitacion):a.tipo==='dueno'?a.dias+' atraso'+(a.dias>1?'s':''):'—')}</span><span class="av-${esc(a.estado)}">${esc(AV_EST[a.estado]||a.estado)}${a.estado==='error'&&a.detalle?' · '+esc(a.detalle):''}</span></li>`}).join('')}</ul>`:`<div class="empty">Todavía no se ha enviado ningún mensaje automático.</div>`}
+  return `<section class="panel stack"><h2>Avisos del bot</h2>
+   ${as.length?`<ul class="avisos">${as.map(a=>{const t=a.inquilino_id&&tenantById(a.inquilino_id);return `<li><span class="meta"><b>${fmtS(a.fecha)}</b> · ${esc(AV_TIPO[a.tipo]||a.tipo)}</span><span>${esc(t?t.nombre+' · hab. '+roomNo(t.habitacion):'—')}</span><span class="av-${esc(a.estado)}">${esc(AV_EST[a.estado]||a.estado)}${a.estado==='error'&&a.detalle?' · '+esc(a.detalle):''}</span></li>`}).join('')}</ul>`:`<div class="empty">Todavía no hay avisos del bot.</div>`}
   </section>`;
 }
 V.ajustes=function(){
@@ -434,11 +444,10 @@ V.ajustes=function(){
    <div class="field"><label for="c-trec">Recordatorio (antes de vencer)</label><textarea id="c-trec">${esc(c.t_recordatorio||DEFAULTS.t_recordatorio)}</textarea></div>
    <div class="field"><label for="c-tven">Pago vencido</label><textarea id="c-tven">${esc(c.t_vencido||DEFAULTS.t_vencido)}</textarea></div>
    <div class="field"><label for="c-tgra">Confirmación de pago</label><textarea id="c-tgra">${esc(c.t_gracias||DEFAULTS.t_gracias)}</textarea></div>
-   <h2 style="margin-top:6px">Mensajes automáticos</h2>
-   <p class="muted" style="margin:0;font-size:13px">Cada día a las 9:00 a. m. se envía solo el aviso de días antes y el del día de vencimiento. Si alguien está atrasado, primero te pregunta en Inicio si ya pagó. Usan las plantillas aprobadas en WhatsApp de Meta, no los textos de arriba.</p>
-   <label class="check"><input type="checkbox" id="c-auto"${c.auto_activo?' checked':''}> Enviar mensajes automáticos</label>
-   <div class="grid2 adapt"><div class="field"><label for="c-previo">Primer aviso (días antes de vencer)</label><input id="c-previo" type="number" min="1" max="15" value="${esc(c.auto_previo)}" inputmode="numeric"></div>
-   <div class="field"><label for="c-avcel">Tu celular para avisarte de atrasos</label><input id="c-avcel" value="${esc(c.aviso_celular)}" inputmode="tel" placeholder="9XX XXX XXX"><span class="hint">Opcional. Te llega un WhatsApp cuando hay atrasos por confirmar.</span></div></div>
+   <h2 style="margin-top:6px">Bot de avisos</h2>
+   <p class="muted" style="margin:0;font-size:13px">Cada mañana Claude revisa en Supabase el estado de cada inquilino y te manda una notificación con los enlaces de WhatsApp listos, con los textos de arriba: unos días antes, el día de vencimiento y a los atrasados. Si hay más de un atrasado, antes te pregunta por cada uno si ya pagó.</p>
+   <label class="check"><input type="checkbox" id="c-auto"${c.auto_activo?' checked':''}> Bot de avisos activo</label>
+   <div class="field"><label for="c-previo">Primer aviso (días antes de vencer)</label><input id="c-previo" type="number" min="1" max="15" value="${esc(c.auto_previo)}" inputmode="numeric"></div>
    <button class="btn primary">Guardar ajustes</button>
   </form>
   ${historialAvisos()}
@@ -594,10 +603,10 @@ const FORMS={
   async config(){
     const d={nombre:val('c-nombre'),yape:val('c-yape'),dias_aviso:Math.min(31,Math.max(0,parseInt(val('c-aviso'))||0)),precio_base:r2(val('c-precio')),
       t_recordatorio:val('c-trec')||DEFAULTS.t_recordatorio,t_vencido:val('c-tven')||DEFAULTS.t_vencido,t_gracias:val('c-tgra')||DEFAULTS.t_gracias,
-      auto_activo:!!($('c-auto')&&$('c-auto').checked),auto_previo:Math.min(15,Math.max(1,parseInt(val('c-previo'))||5)),aviso_celular:val('c-avcel')};
-    if(d.auto_activo&&!d.yape){toast('Escribe el número de Yape antes de activar los mensajes.');return}
+      auto_activo:!!($('c-auto')&&$('c-auto').checked),auto_previo:Math.min(15,Math.max(1,parseInt(val('c-previo'))||5))};
+    if(d.auto_activo&&!d.yape){toast('Escribe el número de Yape antes de activar el bot.');return}
     const row=await run(sb.from('config').update(d).eq('id',1).select().single(),'Ajustes guardados');
-    if(row&&row!==true){upsertLocal('config',row);render()}
+    if(row&&row!==true){upsertLocal('config',row);await actualizarEstados();render()}
   },
   async precios(){
     const ch=[...document.querySelectorAll('[data-room]')].map(i=>({n:+i.dataset.room,p:r2(i.value)})).filter(x=>{const r=roomByNum(x.n);return r&&r2(r.precio)!==x.p});
@@ -628,7 +637,7 @@ const FORMS={
         if(pago&&pago!==true)upsertLocal('pagos',pago);
         else toast('El inquilino quedó registrado, pero no su primer pago. Regístralo desde su ficha.');
       }
-      render();tenantSheet(row.id);
+      await actualizarEstados();render();tenantSheet(row.id);
     }
     btn.disabled=false;
   },
@@ -646,7 +655,7 @@ const FORMS={
     const d={inquilino_id:tid,habitacion:t.habitacion,periodo:val('p-per'),monto,fecha:val('p-fecha'),metodo:val('p-met'),nota:val('p-nota'),comprobante};
     const row=await run(sb.from('pagos').insert(d).select().single());
     if(!row||row===true){btn.disabled=false;btn.textContent='Guardar pago';return}
-    upsertLocal('pagos',row);render();
+    upsertLocal('pagos',row);await actualizarEstados();render();
     openSheet(sheetHead('Pago registrado')+`<p style="margin:0 0 16px">${money(monto)} de <b>${esc(t.nombre)}</b> por ${esc(pLabel(d.periodo))}.</p><div class="row">${waBtn(t,'gracias','Enviar confirmación',row)}<button class="btn" data-act="close">Listo</button></div>`);
   },
   async nota(f){
@@ -672,14 +681,10 @@ const ACTS={
   calMove(b){S.calP=pAdd(S.calP||curP(),+b.dataset.d);S.calDay=null;render()},
   calDay(b){S.calDay=b.dataset.day;render()},
   export(){exportar()},
-  async avEnviar(b){
-    const a=S.avisos.find(x=>x.id===b.dataset.id);if(!a)return;
-    b.disabled=true;b.textContent='Enviando…';
-    const r=await fn('avisos',{modo:'enviar',id:a.id});
-    if(r.error){b.disabled=false;b.textContent='Enviar aviso';toast(r.error==='envio'?'WhatsApp no lo envió: '+(r.detalle||''):r.error==='ya_enviado'?'Ese aviso ya se envió.':'No se pudo enviar el aviso.');return}
-    toast(r.pagado?'Ya no tiene deuda vencida; no se envió.':'Aviso enviado');
-    const {data}=await sb.from('avisos').select('*').eq('id',a.id).maybeSingle();
-    if(data){upsertLocal('avisos',data);render()}
+  async avEnviado(b){
+    // El enlace ya abrió WhatsApp con el mensaje; aquí solo se anota
+    const row=await run(sb.from('avisos').update({estado:'enviado',actualizado:new Date().toISOString()}).eq('id',b.dataset.id).select().single());
+    if(row&&row!==true){upsertLocal('avisos',row);render()}
   },
   async avPago(b){
     const a=S.avisos.find(x=>x.id===b.dataset.id);if(!a)return;
@@ -712,11 +717,11 @@ const ACTS={
         if(!row||row===true)return;
         upsertLocal('inquilinos',row);
         if(borrar&&await run(sb.from('notas').delete().eq('inquilino_id',t.id))){S.notas=S.notas.filter(x=>x.inquilino_id!==t.id)}
-        closeSheet();render();
+        await actualizarEstados();closeSheet();render();
       },nn?`<label class="check" style="margin-bottom:16px"><input type="checkbox" id="ret-notas" checked> Borrar también sus ${nn} nota${nn>1?'s':''} de la bitácora</label>`:'')},
   delTenant(b){const t=tenantById(b.dataset.id);
     confirmSheet('Eliminar registro',`Se borrará a ${esc(t.nombre)} por completo, con su bitácora. Úsalo solo si lo registraste por error.`,'Eliminar',
-      async()=>{if(await run(sb.from('inquilinos').delete().eq('id',t.id),'Registro eliminado')){removeLocal('inquilinos',t.id);S.notas=S.notas.filter(x=>x.inquilino_id!==t.id);closeSheet();render()}})},
+      async()=>{if(await run(sb.from('inquilinos').delete().eq('id',t.id),'Registro eliminado')){removeLocal('inquilinos',t.id);S.notas=S.notas.filter(x=>x.inquilino_id!==t.id);await actualizarEstados();closeSheet();render()}})},
   async delNota(b){
     if(!b.classList.contains('armed')){b.classList.add('armed');b.textContent='¿Borrar?';setTimeout(()=>{if(b.isConnected){b.classList.remove('armed');b.textContent='✕'}},3000);return}
     if(await run(sb.from('notas').delete().eq('id',b.dataset.id),'Nota borrada')){removeLocal('notas',b.dataset.id);tenantSheet(b.dataset.t,true);schedule()}
@@ -726,7 +731,7 @@ const ACTS={
       async()=>{if(await run(sb.from('notas').delete().eq('inquilino_id',t.id),'Bitácora borrada')){S.notas=S.notas.filter(x=>x.inquilino_id!==t.id);tenantSheet(t.id);schedule()}})},
   delPago(b){const x=S.pagos.find(p=>p.id===b.dataset.id);
     confirmSheet('Eliminar pago',`Se borrará el pago de ${money(x.monto)} de ${esc(pLabel(x.periodo))}. La deuda del inquilino se recalculará.`,'Eliminar pago',
-      async()=>{if(await run(sb.from('pagos').delete().eq('id',x.id),'Pago eliminado')){removeLocal('pagos',x.id);if(x.comprobante)sb.storage.from('comprobantes').remove([x.comprobante]);closeSheet();render()}})}
+      async()=>{if(await run(sb.from('pagos').delete().eq('id',x.id),'Pago eliminado')){removeLocal('pagos',x.id);if(x.comprobante)sb.storage.from('comprobantes').remove([x.comprobante]);await actualizarEstados();closeSheet();render()}})}
 };
 document.addEventListener('click',e=>{
   const b=e.target.closest('[data-act]');
