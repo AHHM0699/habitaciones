@@ -219,3 +219,14 @@ input[type=file]{padding:8px;min-height:auto}
 .user .main b{display:block}
 .user.off{opacity:.55}
 .badge{font-size:11px;font-weight:700;padding:2px 7px;border-radius:99px;background:var(--surface-2);border:1px solid var(--line);color:var(--ink-2)}
+/* Mensajes automáticos */
+.confirmar{border-color:color-mix(in srgb,var(--bad) 35%,var(--line))}
+.item.col{flex-direction:column;align-items:stretch}
+.item-top{display:flex;align-items:center;gap:10px;min-width:0}
+.avisos{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.avisos li{display:grid;gap:2px;padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);font-size:14px;overflow-wrap:anywhere}
+.avisos .meta{font-size:12px;color:var(--muted)}
+.avisos .meta b{color:var(--ink-2)}
+.av-enviado{color:var(--ok);font-weight:700;font-size:13px}
+.av-error{color:var(--bad);font-weight:700;font-size:13px}
+.av-pendiente,.av-pagado,.av-descartado,.av-caducado{color:var(--muted);font-size:13px}
