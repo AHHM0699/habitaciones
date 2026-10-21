@@ -17,9 +17,10 @@ const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSe
 const MESES=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
 const MES3=['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
 const DEFAULTS={nombre:'',yape:'999663869',dias_aviso:3,precio_base:350,auto_activo:false,auto_previo:5,
-  t_recordatorio:'Hola {nombre}, te recuerdo que el alquiler de la habitación {habitacion} de {mes} (S/ {monto}) vence el {fecha}. Puedes pagar por Yape al {yape} (a nombre de Liliana Montenegro Fiestas). ¡Gracias!',
-  t_vencido:'Hola {nombre}, el alquiler de la habitación {habitacion} venció el {fecha} y lleva {dias} días de atraso. El monto pendiente es S/ {deuda}. Por favor regulariza tu pago lo antes posible. Yape: {yape} (a nombre de Liliana Montenegro Fiestas). Gracias.',
-  t_gracias:'Hola {nombre}, confirmo que recibí tu pago de S/ {pago} por la habitación {habitacion} ({mes}). ¡Gracias!'};
+  t_recordatorio:'Hola {nombre}, te escribimos para recordarte que el alquiler de tu habitación (N.° {habitacion}) correspondiente a {mes} vence el {fecha}. El monto es S/ {monto}. Puedes pagar por Yape al {yape}, a nombre de Liliana Montenegro Fiestas. ¡Gracias!',
+  t_hoy:'Hola {nombre}, te recordamos que hoy vence el alquiler de tu habitación (N.° {habitacion}) correspondiente a {mes}. El monto es S/ {monto}. Puedes pagar por Yape al {yape}, a nombre de Liliana Montenegro Fiestas. ¡Gracias!',
+  t_vencido:'Hola {nombre}, el alquiler de tu habitación (N.° {habitacion}) venció el {fecha} y ya lleva {dias} de atraso. El monto pendiente es S/ {deuda}. Por favor, regulariza tu pago lo antes posible. Puedes pagar por Yape al {yape}, a nombre de Liliana Montenegro Fiestas. Gracias.',
+  t_gracias:'Hola {nombre}, te confirmo que recibí tu pago de S/ {pago} por el alquiler de tu habitación (N.° {habitacion}) correspondiente a {mes}. ¡Muchas gracias!'};
 const EST={vencido:{label:'Vencido',icon:'▲',ord:0},hoy:{label:'Vence hoy',icon:'●',ord:1},porVencer:{label:'Por vencer',icon:'◐',ord:2},alDia:{label:'Al día',icon:'✓',ord:3},libre:{label:'Libre',icon:'○',ord:4}};
 const METODOS=['Efectivo','Yape','Plin','Transferencia','Otro'];
 
@@ -102,16 +103,19 @@ const pill=(estado,text)=>`<span class="pill s-${estado}"><i aria-hidden="true">
    WHATSAPP
    ============================================================ */
 function fillTpl(tpl,v){return String(tpl||'').replace(/\{(\w+)\}/g,(m,k)=>Object.prototype.hasOwnProperty.call(v,k)?v[k]:m)}
+// En los mensajes: "octubre de 2026" y "1 día" / "14 días"
+const mesMsg=p=>{const [y,m]=p.split('-').map(Number);return MESES[m-1]+' de '+y};
+const diasTxt=n=>n+(+n===1?' día':' días');
 function msgFor(t,kind,pago){
   const c=cfg(),st=ST.get(t.id),ref=st&&st.ref;
   const v={nombre:(t.nombre||'').trim().split(/\s+/)[0]||'',habitacion:roomNo(t.habitacion),monto:fmtN(t.monto),
-    deuda:fmtN(st?st.deuda:0),dias:String(st?st.dias:0),fecha:ref?fmtFull(ref.due):'',mes:pago?pLabel(pago.periodo):(ref?pLabel(ref.p):pLabel(curP())),
+    deuda:fmtN(st?st.deuda:0),dias:diasTxt(st?st.dias:0),fecha:ref?fmtFull(ref.due):'',mes:mesMsg(pago?pago.periodo:ref?ref.p:curP()),
     yape:c.yape||'',inmueble:c.nombre||'',pago:pago?fmtN(pago.monto):''};
-  const tpl=kind==='vencido'?c.t_vencido:kind==='gracias'?c.t_gracias:c.t_recordatorio;
-  return fillTpl(tpl||DEFAULTS[kind==='vencido'?'t_vencido':kind==='gracias'?'t_gracias':'t_recordatorio'],v);
+  const k={vencido:'t_vencido',gracias:'t_gracias',hoy:'t_hoy'}[kind]||'t_recordatorio';
+  return fillTpl(c[k]||DEFAULTS[k],v);
 }
 function waUrl(t,kind,pago){const ph=waPhone(t.celular);return ph?'https://wa.me/'+ph+'?text='+encodeURIComponent(msgFor(t,kind,pago)):''}
-const autoKind=t=>{const st=ST.get(t.id);return st&&st.estado==='vencido'?'vencido':'recordatorio'};
+const autoKind=t=>{const st=ST.get(t.id);return st&&(st.estado==='vencido'||st.estado==='hoy')?st.estado:'recordatorio'};
 const ICON_WA='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8s-.4-.1-.6.1-.7.8-.8 1-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.3-.4.7-1.4.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.8 11.9 11.9 0 0 0 4.6 4c1.7.7 2.4.8 3.2.6a2.8 2.8 0 0 0 1.8-1.3 2.3 2.3 0 0 0 .2-1.3c-.1-.1-.2-.2-.5-.3z"/></svg>';
 const ICON_PAY='<svg viewBox="0 0 24 24" stroke-width="1.9" aria-hidden="true"><rect x="2" y="6" width="20" height="13" rx="2"/><circle cx="12" cy="12.5" r="2.5"/></svg>';
 function waAct(t,kind){
@@ -440,8 +444,9 @@ V.ajustes=function(){
    <div class="field"><label for="c-aviso">Avisar con (días de anticipación)</label><input id="c-aviso" type="number" min="0" max="31" value="${esc(c.dias_aviso)}" inputmode="numeric"></div></div>
    <div class="field"><label for="c-precio">Precio normal de una habitación (S/)</label><input id="c-precio" type="number" min="0" step="0.01" value="${esc(c.precio_base)}" inputmode="decimal"><span class="hint">Se usa como precio de las habitaciones nuevas.</span></div>
    <h2 style="margin-top:6px">Mensajes de WhatsApp</h2>
-   <p class="placeholders muted" style="margin:0;font-size:13px;line-height:1.9">Palabras que se reemplazan solas: <code>{nombre}</code> <code>{habitacion}</code> <code>{monto}</code> <code>{deuda}</code> <code>{fecha}</code> <code>{dias}</code> <code>{mes}</code> <code>{yape}</code> <code>{inmueble}</code> <code>{pago}</code></p>
+   <p class="placeholders muted" style="margin:0;font-size:13px;line-height:1.9">Palabras que se reemplazan solas: <code>{nombre}</code> <code>{habitacion}</code> <code>{monto}</code> <code>{deuda}</code> <code>{fecha}</code> <code>{dias}</code> (ej. “14 días”) <code>{mes}</code> (ej. “octubre de 2026”) <code>{yape}</code> <code>{inmueble}</code> <code>{pago}</code></p>
    <div class="field"><label for="c-trec">Recordatorio (antes de vencer)</label><textarea id="c-trec">${esc(c.t_recordatorio||DEFAULTS.t_recordatorio)}</textarea></div>
+   <div class="field"><label for="c-thoy">El día que vence</label><textarea id="c-thoy">${esc(c.t_hoy||DEFAULTS.t_hoy)}</textarea></div>
    <div class="field"><label for="c-tven">Pago vencido</label><textarea id="c-tven">${esc(c.t_vencido||DEFAULTS.t_vencido)}</textarea></div>
    <div class="field"><label for="c-tgra">Confirmación de pago</label><textarea id="c-tgra">${esc(c.t_gracias||DEFAULTS.t_gracias)}</textarea></div>
    <h2 style="margin-top:6px">Bot de avisos</h2>
@@ -495,7 +500,7 @@ function tenantSheet(tid,keepScroll){
     body+=`<div class="debt s-${st.estado}">${pill(st.estado,statusText(st))}
       <div style="margin-top:8px">${st.deuda>0?`Debe <b class="num">${money(st.deuda)}</b>`:st.ref?`Próximo pago: <b class="num">${money(st.ref.saldo)}</b> el ${fmtFull(st.ref.due)}`:'Pagado por adelantado.'}</div></div>`;
     body+=`<div class="row" style="margin-top:12px"><button class="btn primary" data-act="pago" data-id="${esc(t.id)}">Registrar pago</button></div>`;
-    body+=`<div class="stack" style="margin-top:12px;gap:8px"><div class="eyebrow">Enviar por WhatsApp</div><div class="row">${waBtn(t,'recordatorio','Recordatorio')}${st.deuda>0?waBtn(t,'vencido','Cobro de deuda'):''}${lastPago?waBtn(t,'gracias','Confirmar último pago',lastPago):''}</div></div>`;
+    body+=`<div class="stack" style="margin-top:12px;gap:8px"><div class="eyebrow">Enviar por WhatsApp</div><div class="row">${waBtn(t,st.estado==='hoy'?'hoy':'recordatorio',st.estado==='hoy'?'Vence hoy':'Recordatorio')}${st.deuda>0?waBtn(t,'vencido','Cobro de deuda'):''}${lastPago?waBtn(t,'gracias','Confirmar último pago',lastPago):''}</div></div>`;
   }
   body+=`<dl class="kv" style="margin:16px 0">
    <dt>Celular</dt><dd>${esc(t.celular||'—')}</dd><dt>DNI</dt><dd>${esc(t.dni||'—')}</dd>
@@ -602,7 +607,7 @@ const val=id=>{const e=$(id);return e?e.value.trim():''};
 const FORMS={
   async config(){
     const d={nombre:val('c-nombre'),yape:val('c-yape'),dias_aviso:Math.min(31,Math.max(0,parseInt(val('c-aviso'))||0)),precio_base:r2(val('c-precio')),
-      t_recordatorio:val('c-trec')||DEFAULTS.t_recordatorio,t_vencido:val('c-tven')||DEFAULTS.t_vencido,t_gracias:val('c-tgra')||DEFAULTS.t_gracias,
+      t_recordatorio:val('c-trec')||DEFAULTS.t_recordatorio,t_hoy:val('c-thoy')||DEFAULTS.t_hoy,t_vencido:val('c-tven')||DEFAULTS.t_vencido,t_gracias:val('c-tgra')||DEFAULTS.t_gracias,
       auto_activo:!!($('c-auto')&&$('c-auto').checked),auto_previo:Math.min(15,Math.max(1,parseInt(val('c-previo'))||5))};
     if(d.auto_activo&&!d.yape){toast('Escribe el número de Yape antes de activar el bot.');return}
     const row=await run(sb.from('config').update(d).eq('id',1).select().single(),'Ajustes guardados');
