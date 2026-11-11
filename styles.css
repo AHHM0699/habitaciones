@@ -230,3 +230,4 @@ input[type=file]{padding:8px;min-height:auto}
 .av-enviado{color:var(--ok);font-weight:700;font-size:13px}
 .av-error{color:var(--bad);font-weight:700;font-size:13px}
 .av-pendiente,.av-pagado,.av-descartado,.av-caducado{color:var(--muted);font-size:13px}
+.pin-firma{font:700 22px/1 var(--f-mono);letter-spacing:.4em;text-align:center}
