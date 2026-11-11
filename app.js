@@ -113,7 +113,9 @@ function msgFor(t,kind,pago){
     deuda:fmtN(st?st.deuda:0),dias:diasTxt(st?st.dias:0),fecha:ref?fmtFull(ref.due):'',mes:mesMsg(pago?pago.periodo:ref?ref.p:curP()),
     yape:c.yape||'',inmueble:c.nombre||'',pago:pago?fmtN(pago.monto):''};
   const k={vencido:'t_vencido',gracias:'t_gracias',hoy:'t_hoy'}[kind]||'t_recordatorio';
-  return fillTpl(c[k]||DEFAULTS[k],v);
+  let m=fillTpl(c[k]||DEFAULTS[k],v);
+  if(kind==='gracias'&&pago&&pago.numero&&pago.codigo)m+=`\n\nSu recibo N° ${String(pago.numero).padStart(6,'0')} (verificado): ${APP_URL}verificar.html?c=${pago.codigo}`;
+  return m;
 }
 function waUrl(t,kind,pago){const ph=waPhone(t.celular);return ph?'https://wa.me/'+ph+'?text='+encodeURIComponent(msgFor(t,kind,pago)):''}
 const autoKind=t=>{const st=ST.get(t.id);return st&&(st.estado==='vencido'||st.estado==='hoy')?st.estado:'recordatorio'};
@@ -361,7 +363,7 @@ function pagoRegistrado(x){
   const t=tenantById(x.inquilino_id);
   if(esFirmado(x)){
     toast('Pago firmado por '+x.firmado_por);
-    openSheet(sheetHead('Pago registrado ✓')+`<p style="margin:0 0 16px">${money(x.monto)} de <b>${esc(t?t.nombre:'')}</b> por ${esc(pLabel(x.periodo))}. Firmado por ${esc(x.firmado_por)}.</p><div class="row">${t?waBtn(t,'gracias','Enviar confirmación',x):''}<button class="btn" data-act="close">Listo</button></div>`);
+    openSheet(sheetHead('Pago registrado ✓')+`<p style="margin:0 0 16px">${money(x.monto)} de <b>${esc(t?t.nombre:'')}</b> por ${esc(pLabel(x.periodo))}. Firmado por ${esc(x.firmado_por)}.</p><div class="row">${esFirmado(x)&&x.numero?`<button class="btn" data-act="recibo" data-id="${esc(x.id)}">🧾 Recibo PDF</button>`:''}${t?waBtn(t,'gracias','Enviar confirmación',x):''}<button class="btn" data-act="close">Listo</button></div>`);
     return;
   }
   openSheet(sheetHead('Pago registrado · por firmar')+`<p style="margin:0 0 10px">${money(x.monto)} de <b>${esc(t?t.nombre:'')}</b> por ${esc(pLabel(x.periodo))}. Hasta que Abdon o Liliana lo firmen no cuenta en la deuda.</p>
@@ -678,16 +680,36 @@ function firmaSheet(id,rechazo){
     <div class="row"><button type="button" class="btn" data-act="pagoVer" data-id="${esc(x.id)}">Cancelar</button><button class="btn ${rechazo?'danger':'primary'}" id="f-ok">${rechazo?'Rechazar':'Firmar'}</button></div>
    </form>`,rechazo?'#f-mot':'#f-pin');
 }
+// Recibo en PDF (ticket 80 mm): compartir (WhatsApp, correo…), guardar o imprimir
+async function abrirRecibo(id){
+  let x=S.pagos.find(p=>p.id===id);if(!x)return;
+  // El número lo pone la base al firmar: si aún no llegó por tiempo real, se pide
+  if(!x.numero){const r=await sb.from('pagos').select('*').eq('id',id).maybeSingle();if(r.data){upsertLocal('pagos',r.data);x=r.data}}
+  toast('Generando recibo…');
+  let r;
+  try{r=await Recibo.generar(x,tenantById(x.inquilino_id),APP_URL)}catch(e){toast(e.message||'No se pudo generar el recibo');return}
+  const url=URL.createObjectURL(r.blob);
+  let archivo=null;try{archivo=new File([r.blob],r.nombre,{type:'application/pdf'})}catch(e){}
+  const comparte=!!(archivo&&navigator.canShare&&navigator.canShare({files:[archivo]}));
+  openSheet(sheetHead(esc(r.titulo),esc((tenantById(x.inquilino_id)||{}).nombre||''))+`<div class="stack">
+    ${comparte?'<button class="btn primary" data-act="rcCompartir">Compartir (WhatsApp, correo…)</button>':''}
+    <a class="btn${comparte?'':' primary'}" href="${url}" download="${esc(r.nombre)}">Guardar PDF</a>
+    <a class="btn" href="${url}" target="_blank" rel="noopener">Ver e imprimir</a>
+    <button class="btn" data-act="pagoVer" data-id="${esc(x.id)}">Volver</button></div>`);
+  RECIBO={archivo,titulo:r.titulo};
+  setTimeout(()=>URL.revokeObjectURL(url),10*60000);
+}
+let RECIBO=null;
 function pagoSheet(id){
   const x=S.pagos.find(p=>p.id===id);if(!x)return;
   const t=tenantById(x.inquilino_id);
   openSheet(sheetHead(money(x.monto),esc((t?t.nombre:'Inquilino eliminado')+' · Habitación '+roomNo(x.habitacion)))+
-   `<dl class="kv" style="margin:0 0 14px"><dt>Mes que cubre</dt><dd style="text-transform:capitalize">${esc(pLabel(x.periodo))}</dd><dt>Fecha</dt><dd>${fmtS(x.fecha)}</dd><dt>Método</dt><dd>${esc(x.metodo||'—')}</dd>${x.nota?`<dt>Nota</dt><dd style="font-weight:400">${esc(x.nota)}</dd>`:''}${x.atendido_por?`<dt>Atendió</dt><dd>${esc(x.atendido_por)}</dd>`:''}
+   `<dl class="kv" style="margin:0 0 14px">${x.numero?`<dt>Recibo</dt><dd>N° ${String(x.numero).padStart(6,'0')}</dd>`:''}<dt>Mes que cubre</dt><dd style="text-transform:capitalize">${esc(pLabel(x.periodo))}</dd><dt>Fecha</dt><dd>${fmtS(x.fecha)}</dd><dt>Método</dt><dd>${esc(x.metodo||'—')}</dd>${x.nota?`<dt>Nota</dt><dd style="font-weight:400">${esc(x.nota)}</dd>`:''}${x.atendido_por?`<dt>Atendió</dt><dd>${esc(x.atendido_por)}</dd>`:''}
    <dt>Estado</dt><dd>${x.estado==='por_firmar'?tagEstado(x):x.estado==='rechazado'?tagEstado(x)+(x.firmado_por?' por '+esc(x.firmado_por):''):x.firmado_por?'✓ Firmado por '+esc(x.firmado_por)+(x.firmado_en?' · '+fmtHora(x.firmado_en):''):'Firmado (registrado antes del PIN)'}</dd>
    ${x.estado==='rechazado'&&x.motivo?`<dt>Motivo</dt><dd style="font-weight:400">${esc(x.motivo)}</dd>`:''}</dl>
    ${x.comprobante?`<div id="pv-img" class="muted" style="margin-bottom:14px">Cargando comprobante…</div>`:''}
    ${x.estado==='por_firmar'?`<div class="row" style="margin-bottom:10px"><button class="btn primary" data-act="firmar" data-id="${esc(x.id)}">Firmar</button><button class="btn danger" data-act="rechazar" data-id="${esc(x.id)}">Rechazar</button></div><div class="row" style="margin-bottom:10px">${avisoFirmaBtn(x)}</div>`:''}
-   <div class="row">${t&&t.activo&&esFirmado(x)?waBtn(t,'gracias','Enviar confirmación',x):''}<button class="btn danger" data-act="delPago" data-id="${esc(x.id)}">Eliminar pago</button></div>`);
+   <div class="row">${esFirmado(x)&&x.numero?`<button class="btn" data-act="recibo" data-id="${esc(x.id)}">🧾 Recibo PDF</button>`:''}${t&&t.activo&&esFirmado(x)?waBtn(t,'gracias','Enviar confirmación',x):''}<button class="btn danger" data-act="delPago" data-id="${esc(x.id)}">Eliminar pago</button></div>`);
   if(x.comprobante)sb.storage.from('comprobantes').createSignedUrl(x.comprobante,3600).then(({data,error})=>{
     const el=$('pv-img');if(!el)return;
     if(error||!data){el.textContent='No se pudo cargar el comprobante.';return}
@@ -802,7 +824,7 @@ const FORMS={
     const x=r.pago,t=tenantById(x.inquilino_id);
     if(rechazo){toast('Pago rechazado por '+x.firmado_por);closeSheet();return}
     toast('Pago firmado por '+x.firmado_por);
-    openSheet(sheetHead('Pago firmado ✓')+`<p style="margin:0 0 16px">${money(x.monto)} de <b>${esc(t?t.nombre:'')}</b> por ${esc(pLabel(x.periodo))}. Ya cuenta en su deuda.</p><div class="row">${t?waBtn(t,'gracias','Enviar confirmación al inquilino',x):''}<button class="btn" data-act="close">Listo</button></div>`);
+    openSheet(sheetHead('Pago firmado ✓')+`<p style="margin:0 0 16px">${money(x.monto)} de <b>${esc(t?t.nombre:'')}</b> por ${esc(pLabel(x.periodo))}. Ya cuenta en su deuda.</p><div class="row">${esFirmado(x)&&x.numero?`<button class="btn" data-act="recibo" data-id="${esc(x.id)}">🧾 Recibo PDF</button>`:''}${t?waBtn(t,'gracias','Enviar confirmación al inquilino',x):''}<button class="btn" data-act="close">Listo</button></div>`);
   },
   async nota(f){
     const tid=f.dataset.id,texto=val('n-texto'),fecha=val('n-fecha')||HOY;
@@ -822,6 +844,8 @@ const ACTS={
   tenantForm(b){tenantForm(b.dataset.id,b.dataset.room)},
   pago(b){pagoForm(b.dataset.id,b.dataset.periodo)},
   pagoVer(b){pagoSheet(b.dataset.id)},
+  recibo(b){abrirRecibo(b.dataset.id)},
+  async rcCompartir(){if(!RECIBO)return;try{await navigator.share({files:[RECIBO.archivo],title:RECIBO.titulo})}catch(e){if(e.name!=='AbortError')toast('No se pudo compartir. Usa Guardar PDF.')}},
   firmar(b){firmaSheet(b.dataset.id,false)},
   rechazar(b){firmaSheet(b.dataset.id,true)},
   close(){closeSheet()},
@@ -924,7 +948,7 @@ async function exportar(){
   try{await loadXLSX()}catch(e){toast('No se pudo preparar el Excel. Revisa tu conexión.');return}
   recompute();
   const X=window.XLSX,wb=X.utils.book_new();
-  const pagos=[...S.pagos].sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).map(x=>{const t=tenantById(x.inquilino_id);return {'Fecha':fmtS(x.fecha),'Mes que cubre':pLabel(x.periodo),'Habitación':roomNo(x.habitacion),'Inquilino':t?t.nombre:'','Monto (S/)':+x.monto||0,'Método':x.metodo||'','Nota':x.nota||'','Atendió':x.atendido_por||'','Estado':x.estado==='por_firmar'?'Por firmar':x.estado==='rechazado'?'Rechazado':'Firmado','Firmado por':x.firmado_por||''}});
+  const pagos=[...S.pagos].sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).map(x=>{const t=tenantById(x.inquilino_id);return {'Fecha':fmtS(x.fecha),'Mes que cubre':pLabel(x.periodo),'Habitación':roomNo(x.habitacion),'Inquilino':t?t.nombre:'','Monto (S/)':+x.monto||0,'Método':x.metodo||'','Nota':x.nota||'','Atendió':x.atendido_por||'','Estado':x.estado==='por_firmar'?'Por firmar':x.estado==='rechazado'?'Rechazado':'Firmado','Firmado por':x.firmado_por||'','Recibo':x.numero?String(x.numero).padStart(6,'0'):''}});
   const inq=[...S.tenants].sort((a,b)=>a.habitacion-b.habitacion).map(t=>{const st=ST.get(t.id);return {'Habitación':roomNo(t.habitacion),'Nombre':t.nombre,'DNI':t.dni||'','Celular':t.celular||'','Ingreso':fmtS(t.fecha_ingreso),'Día de pago':+t.dia_pago,'Monto (S/)':+t.monto||0,'Garantía (S/)':+t.garantia||0,'Estado':st?statusText(st):'Retirado','Deuda (S/)':st?st.deuda:0,'Salida':t.fecha_salida?fmtS(t.fecha_salida):''}});
   const notas=[...S.notas].sort((a,b)=>a.fecha.localeCompare(b.fecha)).map(n=>{const t=tenantById(n.inquilino_id);return {'Fecha':fmtS(n.fecha),'Habitación':t?roomNo(t.habitacion):'','Inquilino':t?t.nombre:'','Nota':n.texto,'Anotado por':perfilNombre(n.autor)}});
   X.utils.book_append_sheet(wb,X.utils.json_to_sheet(pagos.length?pagos:[{'Fecha':'Sin pagos'}]),'Pagos');
@@ -937,7 +961,7 @@ async function exportar(){
    VERSIÓN: si se publicó una nueva, este dispositivo se recarga solo
    (para que ningún celular se quede con la app vieja)
    ============================================================ */
-const VERSION='20261111e';
+const VERSION='20261111f';
 async function revisarVersion(){
   try{
     const r=await fetch('version.txt?t='+Date.now(),{cache:'no-store'});

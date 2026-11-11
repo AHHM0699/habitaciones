@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Verificación de recibo · Sueño Feliz</title>
+<link rel="icon" href="favicon-32.png" type="image/png">
+<style>
+:root{--bg:#f4f6f8;--card:#fff;--text:#14202e;--muted:#5f6d7e;--line:#e1e6ee;--ok:#18794e;--oks:#dff5e8;--me:#8a6a2b;--mes:#f8f0df;--mal:#b91c1c;--mals:#fee2e2;--navy:#0f2a4d;--gold:#d9b46a}
+@media (prefers-color-scheme:dark){:root{--bg:#0d141c;--card:#151e29;--text:#eef2f7;--muted:#9aa7b8;--line:#263242;--ok:#4ade80;--oks:#14321f;--me:#e3ca9c;--mes:#33290f;--mal:#f87171;--mals:#3b1414}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+header{background:var(--navy);color:#f5ead2;padding:14px 16px;border-bottom:3px solid var(--gold);display:flex;align-items:center;gap:12px}
+header img{width:44px;height:44px;border-radius:10px}
+header b{display:block;font-size:17px}header small{opacity:.8}
+main{max-width:480px;margin:0 auto;padding:18px 16px}
+.estado{border-radius:14px;padding:18px;text-align:center;margin-bottom:14px}
+.estado .i{font-size:34px;line-height:1}.estado h1{margin:6px 0 4px;font-size:22px}.estado p{margin:0;font-size:14.5px}
+.ok{background:var(--oks);color:var(--ok)}.medio{background:var(--mes);color:var(--me)}.mal{background:var(--mals);color:var(--mal)}
+dl{background:var(--card);border-radius:14px;padding:14px 16px;margin:0;display:grid;grid-template-columns:auto 1fr;gap:8px 14px;border:1px solid var(--line)}
+dt{color:var(--muted)}dd{margin:0;text-align:right;font-weight:600}
+.cod{color:var(--muted);text-align:center;font-size:13px;margin-top:14px;letter-spacing:.06em}
+.nota{color:var(--muted);text-align:center;font-size:12.5px;margin-top:10px}
+</style>
+</head>
+<body>
+<header><img src="icon-192.png" alt=""><div><b>Sueño Feliz</b><small>Verificación de recibo</small></div></header>
+<main id="m"><p style="text-align:center;color:var(--muted)">Verificando…</p></main>
+<script>
+(async function(){
+  const URL_RPC='https://uscgdhqfpzopyzoeydjn.supabase.co/rest/v1/rpc/verificar_recibo';
+  const KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVzY2dkaHFmcHpvcHl6b2V5ZGpuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE5MDc5MTIsImV4cCI6MjEwNzQ4MzkxMn0.nMwX0UnNj2mo-j_NmlXDhSpARxKXtFrVXKUuShRIFkU';
+  const MESES=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const f=s=>{const [y,m,d]=String(s||'').slice(0,10).split('-');return d?`${d}/${m}/${y}`:''};
+  const soles=n=>'S/ '+Number(n||0).toLocaleString('es-PE',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fh=iso=>iso?new Date(iso).toLocaleString('es-PE',{timeZone:'America/Lima',day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+  const codigo=(new URLSearchParams(location.search).get('c')||'').replace(/[^A-Za-z0-9]/g,'').toUpperCase().slice(0,20);
+  const m=document.getElementById('m');
+  let r=null;
+  if(codigo.length>=8){
+    try{
+      const x=await fetch(URL_RPC,{method:'POST',headers:{apikey:KEY,authorization:'Bearer '+KEY,'content-type':'application/json'},body:JSON.stringify({p_codigo:codigo})});
+      if(x.ok)r=await x.json();
+    }catch(e){m.innerHTML='<section class="estado medio"><div class="i">&#8987;</div><h1>Sin conexión</h1><p>No se pudo verificar ahora. Inténtelo otra vez.</p></section>';return}
+  }
+  let clase,titulo,detalle;
+  if(!r||!r.existe){clase='mal';titulo='Recibo no válido';detalle='No existe un pago con este código. El recibo puede ser falso, estar mal escrito o el pago fue eliminado.'}
+  else if(r.estado==='rechazado'){clase='mal';titulo='Pago rechazado';detalle='Este pago no fue aceptado.'}
+  else if(r.estado==='por_firmar'){clase='medio';titulo='Pendiente de firma';detalle='El pago fue registrado y está pendiente de confirmación.'}
+  else{clase='ok';titulo='Recibo válido';detalle='Firmado por '+(r.firmado_por||'Sueño Feliz')+(r.firmado_en?' el '+fh(r.firmado_en):'')+'.'}
+  const filas=r&&r.existe?[
+    ['Recibo',r.numero?'N° '+String(r.numero).padStart(6,'0'):'—'],
+    ['Inquilino',r.cliente],['Habitación','N° '+String(r.habitacion).padStart(2,'0')],
+    ['Mes',(([y,mm])=>MESES[+mm-1]+' '+y)(String(r.periodo).split('-'))],
+    ['Periodo',f(r.inicio)+' al '+f(r.fin)],
+    ['Fecha de pago',f(r.fecha)],['Monto',soles(r.monto)],['Medio de pago',r.metodo||'—']]:[];
+  m.innerHTML=`<section class="estado ${clase}"><div class="i">${{ok:'&#10003;',medio:'&#8987;',mal:'&#10007;'}[clase]}</div><h1>${esc(titulo)}</h1><p>${esc(detalle)}</p></section>
+   ${filas.length?`<dl>${filas.map(([k,v])=>`<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>`:''}
+   <div class="cod">Código ${esc(codigo.replace(/(.{5})(?=.)/g,'$1-')||'-')}</div>
+   <p class="nota">Este recibo se canjea por una boleta de venta. No es un comprobante de pago con valor tributario.</p>`;
+})();
+</script>
+</body>
+</html>
