@@ -231,3 +231,7 @@ input[type=file]{padding:8px;min-height:auto}
 .av-error{color:var(--bad);font-weight:700;font-size:13px}
 .av-pendiente,.av-pagado,.av-descartado,.av-caducado{color:var(--muted);font-size:13px}
 .pin-firma{font:700 22px/1 var(--f-mono);letter-spacing:.4em;text-align:center}
+/* Ventanas con PIN (firmar, rechazar, eliminar): arriba de la pantalla, lejos del teclado */
+.scrim.arriba{align-items:flex-start}
+.scrim.arriba .sheet{border-radius:0 0 18px 18px;padding-top:calc(18px + env(safe-area-inset-top,0px))}
+@media (prefers-reduced-motion:no-preference){.scrim.arriba .sheet{animation:baja .18s ease-out}@keyframes baja{from{transform:translateY(-16px);opacity:.6}to{transform:none;opacity:1}}}

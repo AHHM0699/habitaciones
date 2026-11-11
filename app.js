@@ -531,6 +531,8 @@ V.ajustes=function(){
    ============================================================ */
 function openSheet(html,focus){
   $('sheet-root').innerHTML=`<div class="scrim" data-act="closeBg"><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
+  // Firmar, rechazar y eliminar (ventanas cortas con PIN) salen ARRIBA: así el teclado nunca las tapa
+  if(/data-form="firma"|id="d-pin"/.test(html))document.querySelector('.scrim').classList.add('arriba');
   if(focus){const f=document.querySelector('.sheet '+focus);if(f)f.focus({preventScroll:true})}
   ajustarTeclado();
 }
@@ -542,7 +544,13 @@ function ajustarTeclado(){
   const vv=window.visualViewport;
   if(vv){s.style.top=vv.offsetTop+'px';s.style.height=vv.height+'px';s.style.bottom='auto'}
   const a=document.activeElement;
-  if(a&&s.contains(a)&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))setTimeout(()=>{try{a.scrollIntoView({block:'center',behavior:'smooth'})}catch(e){}},60);
+  // Deja el campo cerca de la parte de arriba de la ventana (lejos del teclado), moviendo solo la ventana
+  if(a&&s.contains(a)&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))setTimeout(()=>{
+    const sh=a.closest('.sheet');if(!sh)return;
+    const d=a.getBoundingClientRect().top-sh.getBoundingClientRect().top-90;
+    if(d>0)sh.scrollTop+=d;
+    window.scrollTo(0,window.scrollY);
+  },80);
 }
 if(window.visualViewport){visualViewport.addEventListener('resize',ajustarTeclado);visualViewport.addEventListener('scroll',ajustarTeclado)}
 document.addEventListener('focusin',e=>{if(e.target.closest&&e.target.closest('.sheet'))setTimeout(ajustarTeclado,350)});
@@ -929,7 +937,7 @@ async function exportar(){
    VERSIÓN: si se publicó una nueva, este dispositivo se recarga solo
    (para que ningún celular se quede con la app vieja)
    ============================================================ */
-const VERSION='20261111d';
+const VERSION='20261111e';
 async function revisarVersion(){
   try{
     const r=await fetch('version.txt?t='+Date.now(),{cache:'no-store'});
