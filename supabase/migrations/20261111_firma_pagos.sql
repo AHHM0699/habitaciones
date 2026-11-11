@@ -112,7 +112,7 @@ end $$;
 
 create or replace function public.firmar_pago(p_pin text, p_id uuid, p_rechazar boolean default false, p_motivo text default '')
 returns jsonb language plpgsql security definer set search_path to '' as $$
-declare v record; r public.pagos; motivo text := nullif(trim(coalesce(p_motivo, '')), '');
+declare v record; r public.pagos; v_motivo text := nullif(trim(coalesce(p_motivo, '')), '');
 begin
   if not public.es_activo() then return jsonb_build_object('error', 'Tu usuario no tiene permiso. Vuelve a entrar.'); end if;
   select * into r from public.pagos where id = p_id;
@@ -120,11 +120,11 @@ begin
   if r.estado <> 'por_firmar' then
     return jsonb_build_object('error', case when r.estado = 'firmado' then 'Este pago ya está firmado' else 'Este pago fue rechazado' end);
   end if;
-  if p_rechazar and (motivo is null or length(motivo) < 3) then return jsonb_build_object('error', 'Escribe el motivo del rechazo'); end if;
+  if p_rechazar and (v_motivo is null or length(v_motivo) < 3) then return jsonb_build_object('error', 'Escribe el motivo del rechazo'); end if;
   v := privado.verificar_pin(p_pin);
   if v.nombre is null then return jsonb_build_object('error', v.error); end if;
   update public.pagos set estado = case when p_rechazar then 'rechazado' else 'firmado' end,
-      firmado_por = v.nombre, firmado_en = now(), motivo = case when p_rechazar then left(motivo, 200) else null end
+      firmado_por = v.nombre, firmado_en = now(), motivo = case when p_rechazar then left(v_motivo, 200) else null end
     where id = p_id and estado = 'por_firmar'
     returning * into r;
   return jsonb_build_object('pago', to_jsonb(r));
