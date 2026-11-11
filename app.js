@@ -532,8 +532,30 @@ V.ajustes=function(){
 function openSheet(html,focus){
   $('sheet-root').innerHTML=`<div class="scrim" data-act="closeBg"><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
   if(focus){const f=document.querySelector('.sheet '+focus);if(f)f.focus({preventScroll:true})}
+  ajustarTeclado();
 }
 function closeSheet(){$('sheet-root').innerHTML=''}
+// Con el teclado abierto (iPhone/Android), la ventana se acomoda al espacio visible
+// para que el campo que se escribe (sobre todo el PIN) quede a la vista y no debajo del teclado.
+function ajustarTeclado(){
+  const s=document.querySelector('.scrim');if(!s)return;
+  const vv=window.visualViewport;
+  if(vv){s.style.top=vv.offsetTop+'px';s.style.height=vv.height+'px';s.style.bottom='auto'}
+  const a=document.activeElement;
+  if(a&&s.contains(a)&&/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))setTimeout(()=>{try{a.scrollIntoView({block:'center',behavior:'smooth'})}catch(e){}},60);
+}
+if(window.visualViewport){visualViewport.addEventListener('resize',ajustarTeclado);visualViewport.addEventListener('scroll',ajustarTeclado)}
+document.addEventListener('focusin',e=>{if(e.target.closest&&e.target.closest('.sheet'))setTimeout(ajustarTeclado,350)});
+// PIN de firma: al escribir el sexto número se envía solo (sin tocar Enter ni el botón)
+document.addEventListener('input',e=>{
+  const i=e.target;if(!i.classList||!i.classList.contains('pin-firma'))return;
+  i.value=i.value.replace(/\D/g,'').slice(0,6);
+  if(i.value.length!==6)return;
+  const f=i.form,boton=f?f.querySelector('button:not([type=button])'):document.querySelector('.sheet [data-act="confirmYes"]');
+  if(!boton||boton.disabled)return;
+  i.blur();
+  if(f&&f.requestSubmit)f.requestSubmit(boton);else boton.click();
+});
 const sheetHead=(title,sub)=>`<div class="sheet-h"><div><h2>${title}</h2>${sub?`<div class="muted" style="font-size:13px;margin-top:2px">${sub}</div>`:''}</div><button class="iconbtn" data-act="close" aria-label="Cerrar">✕</button></div>`;
 let CONFIRM=null;
 function confirmSheet(title,text,label,fnc,extra){
@@ -907,7 +929,7 @@ async function exportar(){
    VERSIÓN: si se publicó una nueva, este dispositivo se recarga solo
    (para que ningún celular se quede con la app vieja)
    ============================================================ */
-const VERSION='20261111c';
+const VERSION='20261111d';
 async function revisarVersion(){
   try{
     const r=await fetch('version.txt?t='+Date.now(),{cache:'no-store'});
