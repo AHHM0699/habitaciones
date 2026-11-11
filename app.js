@@ -364,8 +364,16 @@ function pagoRegistrado(x){
     openSheet(sheetHead('Pago registrado ✓')+`<p style="margin:0 0 16px">${money(x.monto)} de <b>${esc(t?t.nombre:'')}</b> por ${esc(pLabel(x.periodo))}. Firmado por ${esc(x.firmado_por)}.</p><div class="row">${t?waBtn(t,'gracias','Enviar confirmación',x):''}<button class="btn" data-act="close">Listo</button></div>`);
     return;
   }
-  openSheet(sheetHead('Pago registrado · por firmar')+`<p style="margin:0 0 16px">${money(x.monto)} de <b>${esc(t?t.nombre:'')}</b> por ${esc(pLabel(x.periodo))}. Avisa a Abdon o Liliana para que lo firmen; hasta entonces no cuenta en la deuda.</p>
-   <div class="row">${avisoFirmaBtn(x)}<button class="btn" data-act="close">Listo</button></div>`);
+  openSheet(sheetHead('Pago registrado · por firmar')+`<p style="margin:0 0 10px">${money(x.monto)} de <b>${esc(t?t.nombre:'')}</b> por ${esc(pLabel(x.periodo))}. Hasta que Abdon o Liliana lo firmen no cuenta en la deuda.</p>
+   <p id="av-estado" class="muted" style="margin:0 0 16px">Revisando el aviso automático…</p>
+   <div class="row" id="av-btns">${avisoFirmaBtn(x)}<button class="btn" data-act="close">Listo</button></div>`);
+  // Si el WhatsApp de Liliana (enviador en el Samsung) está conectado, el aviso ya salió solo al grupo HABITACIONES
+  rpc('bot_estado',{}).then(r=>{
+    const el=$('av-estado');if(!el)return;
+    if(r&&r.vivo){el.innerHTML='<b style="color:var(--ok)">✓ Aviso enviado automáticamente al grupo HABITACIONES</b> (llega en segundos).';
+      const a=document.querySelector('#av-btns a.wa');if(a){a.className='btn';a.lastChild.textContent=' Reenviar a mano'}}
+    else el.textContent='El aviso automático no está conectado ahora: avisa al grupo con el botón.';
+  });
 }
 function pendientesHoy(){
   return S.avisos.filter(a=>a.tipo==='vencido'&&a.estado==='pendiente'&&a.fecha===HOY).filter(a=>{const st=ST.get(a.inquilino_id);return st&&st.estado==='vencido'});
@@ -899,7 +907,7 @@ async function exportar(){
    VERSIÓN: si se publicó una nueva, este dispositivo se recarga solo
    (para que ningún celular se quede con la app vieja)
    ============================================================ */
-const VERSION='20261111b';
+const VERSION='20261111c';
 async function revisarVersion(){
   try{
     const r=await fetch('version.txt?t='+Date.now(),{cache:'no-store'});
