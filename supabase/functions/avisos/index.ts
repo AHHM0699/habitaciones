@@ -123,7 +123,7 @@ Deno.serve(async (req) => {
     if (error) throw error;
     const pagado = new Map<string, number>();
     if (ts && ts.length) {
-      const { data: ps, error: e2 } = await admin.from("pagos").select("inquilino_id,periodo,monto").in("inquilino_id", ts.map((t) => t.id));
+      const { data: ps, error: e2 } = await admin.from("pagos").select("inquilino_id,periodo,monto").eq("estado", "firmado").in("inquilino_id", ts.map((t) => t.id));
       if (e2) throw e2;
       for (const p of ps || []) { const k = p.inquilino_id + "|" + p.periodo; pagado.set(k, r2((pagado.get(k) || 0) + (+p.monto || 0))); }
     }

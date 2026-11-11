@@ -67,7 +67,7 @@ let PAID=new Map(),ST=new Map(),ROOMT=new Map();
 // todos los dispositivos y el bot de avisos ven exactamente lo mismo.
 function recompute(){
   PAID=new Map();
-  for(const p of S.pagos){const k=p.inquilino_id+'|'+p.periodo;PAID.set(k,r2((PAID.get(k)||0)+(+p.monto||0)))}
+  for(const p of S.pagos){if(!esFirmado(p))continue;const k=p.inquilino_id+'|'+p.periodo;PAID.set(k,r2((PAID.get(k)||0)+(+p.monto||0)))}
   const per=new Map(),est=new Map(S.estados.map(e=>[e.inquilino_id,e]));
   for(const x of S.saldos){const a=per.get(x.inquilino_id)||[];a.push({p:x.periodo,due:dn(x.vence),pagado:+x.pagado||0,saldo:+x.saldo||0});per.set(x.inquilino_id,a)}
   ST=new Map();ROOMT=new Map();
@@ -90,7 +90,7 @@ function esperado(p){
   }
   return r2(s);
 }
-const cobrado=p=>r2(S.pagos.filter(x=>x.periodo===p).reduce((a,x)=>a+(+x.monto||0),0));
+const cobrado=p=>r2(S.pagos.filter(x=>x.periodo===p&&esFirmado(x)).reduce((a,x)=>a+(+x.monto||0),0));
 function statusText(st){
   if(!st)return EST.libre.label;
   if(st.estado==='vencido')return 'Vencido · '+st.dias+' d';
@@ -160,9 +160,22 @@ async function fn(name,body){
     return data||{};
   }catch(e){return {error:'red'}}
 }
-// Firma con PIN: cada pago (registrar o eliminar) lo aprueba Abdon o Liliana con su PIN.
-// Lo verifica Supabase (registrar_pago / eliminar_pago); quien queda como firmante es el dueño del PIN.
-const pinCampo=(id,txt)=>`<div class="field"><label for="${id}">${txt||'PIN de quien firma'}</label><input id="${id}" class="pin-firma" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off" required placeholder="••••••"><span class="hint">Abdon o Liliana. Queda registrado quién firmó.</span></div>`;
+// Firma con PIN, igual que en Separaciones: cualquiera registra un pago (con su nombre) y queda "por firmar";
+// Abdon o Liliana lo firman o rechazan con su PIN. Lo verifica Supabase (registrar_pago / firmar_pago / eliminar_pago)
+// y quien queda como firmante es el dueño del PIN. Solo los pagos firmados cuentan en la deuda.
+const pinCampo=(id,txt,opcional)=>`<div class="field"><label for="${id}">${txt||'PIN de quien firma'}</label><input id="${id}" class="pin-firma" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off"${opcional?'':' required'} placeholder="••••••"><span class="hint">${opcional?'Solo Abdon o Liliana. Sin PIN, el pago queda <b>por firmar</b> y no cuenta hasta que lo firmen.':'Abdon o Liliana. Queda registrado quién firmó.'}</span></div>`;
+const leerAtendido=()=>lsGet('hc-atendido')||'';
+const atendidoCampo=id=>`<div class="field"><label for="${id}">Atendido por</label><input id="${id}" maxlength="40" autocomplete="name" placeholder="Tu nombre" value="${esc(leerAtendido())}"></div>`;
+const esFirmado=x=>!x.estado||x.estado==='firmado';
+const porFirmar=()=>S.pagos.filter(x=>x.estado==='por_firmar').sort((a,b)=>(b.creado||'').localeCompare(a.creado||''));
+const tagEstado=x=>x.estado==='por_firmar'?'<span class="pill s-hoy"><i aria-hidden="true">✍</i>Por firmar</span>':x.estado==='rechazado'?'<span class="pill s-vencido"><i aria-hidden="true">✕</i>Rechazado</span>':'';
+const APP_URL='https://ahhm0699.github.io/habitaciones/';
+function textoAvisoFirma(x){
+  const t=tenantById(x.inquilino_id);
+  return ['*Pago de habitación por firmar* ✍️',`Hab. ${roomNo(x.habitacion)} · ${t?t.nombre:''}`,`Monto: ${money(x.monto)}${x.metodo?' ('+x.metodo+')':''} · ${fmtS(x.fecha)}`,
+    `Mes: ${pLabel(x.periodo)}`,x.atendido_por?`Atendió: ${x.atendido_por}`:'','',`Firmar: ${APP_URL}#pago=${x.id}`].filter((l,i)=>l||i===5).join('\n');
+}
+const avisoFirmaBtn=x=>`<a class="btn wa" href="https://wa.me/?text=${encodeURIComponent(textoAvisoFirma(x))}" target="_blank" rel="noopener">${ICON_WA.replace('<svg','<svg width="18" height="18" fill="#fff"')} Avisar para que lo firmen</a>`;
 const pinVal=id=>{const e=$(id);return e?e.value.replace(/\D/g,''):''};
 function pinMal(id,msg){toast(msg);const e=$(id);if(e){e.value='';e.focus()}}
 async function rpc(name,args){
@@ -263,6 +276,13 @@ async function probarCodigo(){
 $('lock-form').addEventListener('submit',e=>{e.preventDefault();probarCodigo()});
 $('k-pin').addEventListener('input',e=>{e.target.value=e.target.value.replace(/\D/g,'');$('k-err').textContent='';if(e.target.value.length===6)probarCodigo()});
 
+function abrirDesdeEnlace(){
+  const m=location.hash.match(/^#pago=([0-9a-f-]{36})$/i);
+  if(!m||!S.loaded)return;
+  history.replaceState(null,'',location.pathname+location.search);
+  if(S.pagos.some(x=>x.id===m[1]))pagoSheet(m[1]);else toast('Ese pago ya no existe.');
+}
+window.addEventListener('hashchange',abrirDesdeEnlace);
 async function iniciar(){
   const {data:{session}}=await sb.auth.getSession();
   if(!session){mostrarBloqueo();return}
@@ -273,7 +293,7 @@ async function iniciar(){
   const v=lsGet('hc-view');if(v&&v!=='ajustes')S.view=v;
   render();
   try{await cargar()}catch(e){toast(errMsg(e))}
-  escuchar();render();
+  escuchar();render();abrirDesdeEnlace();
 }
 async function bloquear(){
   if(canal){sb.removeChannel(canal);canal=null}
@@ -316,6 +336,7 @@ V.inicio=function(){
     <div class="muted" style="font-size:13px">${pct}% cobrado${deuda>0?` · Deuda vencida total: <b style="color:var(--bad)">${money(deuda)}</b>`:''}</div>
     <div class="counts">${['vencido','hoy','porVencer','alDia','libre'].map(k=>`<button class="count s-${k}" data-act="view" data-view="cuartos"><b>${cnt[k]}</b><span>${EST[k].icon} ${EST[k].label}</span></button>`).join('')}</div>
   </section>
+  ${panelPorFirmar()}
   ${porConfirmar()}
   <div class="row"><button class="btn primary" data-act="pago">+ Registrar pago</button><button class="btn" data-act="tenantForm">+ Nuevo inquilino</button></div>
   <div class="sec-h"><h2>Necesitan atención</h2><span class="muted" style="font-size:13px">${att.length}</span></div>
@@ -324,6 +345,28 @@ V.inicio=function(){
   </div>`;
 };
 // Atrasos que esperan confirmación antes de enviar el aviso automático
+// Pagos que esperan la firma de Abdon o Liliana
+function panelPorFirmar(){
+  const ps=porFirmar();if(!ps.length)return '';
+  const tot=r2(ps.reduce((a,x)=>a+(+x.monto||0),0));
+  return `<section class="panel stack confirmar" aria-label="Pagos por firmar"><div class="sec-h" style="margin:0"><h2>✍ Pagos por firmar</h2><span class="muted num" style="font-size:13px">${ps.length} · ${money(tot)}</span></div>
+   <p class="muted" style="margin:0;font-size:13px">Registrados sin firma. No cuentan en la deuda hasta que Abdon o Liliana los firmen con su PIN.</p>
+   <div class="list">${ps.map(x=>{const t=tenantById(x.inquilino_id);return `<div class="item col"><div class="item-top"><span class="minitag">${roomNo(x.habitacion)}</span>
+    <button class="main" data-act="pagoVer" data-id="${esc(x.id)}"><div class="name">${esc(t?t.nombre:'Inquilino eliminado')} · <span class="num">${money(x.monto)}</span></div><div class="sub"><span>${esc(pLabel(x.periodo))} · ${fmtS(x.fecha)}${x.metodo?' · '+esc(x.metodo):''}${x.atendido_por?' · Atendió: '+esc(x.atendido_por):''}</span></div></button></div>
+    <div class="row"><button class="btn small primary" data-act="firmar" data-id="${esc(x.id)}">Firmar</button><button class="btn small danger" data-act="rechazar" data-id="${esc(x.id)}">Rechazar</button></div></div>`}).join('')}</div>
+  </section>`;
+}
+// Tras guardar un pago: si quedó por firmar, ofrece avisar; si quedó firmado, la confirmación al inquilino
+function pagoRegistrado(x){
+  const t=tenantById(x.inquilino_id);
+  if(esFirmado(x)){
+    toast('Pago firmado por '+x.firmado_por);
+    openSheet(sheetHead('Pago registrado ✓')+`<p style="margin:0 0 16px">${money(x.monto)} de <b>${esc(t?t.nombre:'')}</b> por ${esc(pLabel(x.periodo))}. Firmado por ${esc(x.firmado_por)}.</p><div class="row">${t?waBtn(t,'gracias','Enviar confirmación',x):''}<button class="btn" data-act="close">Listo</button></div>`);
+    return;
+  }
+  openSheet(sheetHead('Pago registrado · por firmar')+`<p style="margin:0 0 16px">${money(x.monto)} de <b>${esc(t?t.nombre:'')}</b> por ${esc(pLabel(x.periodo))}. Avisa a Abdon o Liliana para que lo firmen; hasta entonces no cuenta en la deuda.</p>
+   <div class="row">${avisoFirmaBtn(x)}<button class="btn" data-act="close">Listo</button></div>`);
+}
 function pendientesHoy(){
   return S.avisos.filter(a=>a.tipo==='vencido'&&a.estado==='pendiente'&&a.fecha===HOY).filter(a=>{const st=ST.get(a.inquilino_id);return st&&st.estado==='vencido'});
 }
@@ -332,7 +375,7 @@ function porConfirmar(){
   return `<section class="panel stack confirmar" aria-label="Atrasos por confirmar"><div class="sec-h" style="margin:0"><h2>¿Ya pagaron?</h2><span class="muted" style="font-size:13px">${ps.length}</span></div>
    <p class="muted" style="margin:0;font-size:13px">Antes de enviar el aviso de atraso, confirma que el pago no llegó.</p>
    <div class="list">${ps.map(a=>{const t=tenantById(a.inquilino_id),st=ST.get(t.id);return `<div class="item col"><div class="item-top"><span class="minitag">${roomNo(t.habitacion)}</span>
-    <button class="main" data-act="tenant" data-id="${esc(t.id)}"><div class="name">${esc(t.nombre)}</div><div class="sub">${pill('vencido',statusText(st))}<span class="num">Debe ${money(st.deuda)}</span></div></button></div>
+    <button class="main" data-act="tenant" data-id="${esc(t.id)}"><div class="name">${esc(t.nombre)}</div><div class="sub">${pill('vencido',statusText(st))}<span class="num">Debe ${money(st.deuda)}</span>${S.pagos.some(x=>x.inquilino_id===t.id&&x.estado==='por_firmar')?'<span>✍ tiene un pago por firmar</span>':''}</div></button></div>
     <div class="row"><button class="btn small" data-act="avPago" data-id="${esc(a.id)}">Ya pagó</button>${waUrl(t,'vencido')?`<a class="btn small wa" href="${esc(waUrl(t,'vencido'))}" target="_blank" rel="noopener" data-act="avEnviado" data-id="${esc(a.id)}">Enviar aviso</a>`:'<span class="btn small off">Falta celular</span>'}<button class="btn small" data-act="avOmitir" data-id="${esc(a.id)}">Hoy no</button></div></div>`}).join('')}</div>
   </section>`;
 }
@@ -413,12 +456,12 @@ V.pagos=function(){
   const opts=[...months].sort().reverse();
   const f=S.pagP||curP();
   const list=S.pagos.filter(x=>f==='todos'||x.periodo===f).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||'')||(b.creado||'').localeCompare(a.creado||''));
-  const tot=r2(list.reduce((a,x)=>a+(+x.monto||0),0));
+  const tot=r2(list.filter(esFirmado).reduce((a,x)=>a+(+x.monto||0),0)),nf=list.filter(esFirmado).length;
   return `<div class="stack">
   <div class="toolbar"><select id="pg-mes" data-act="pagMes" aria-label="Mes que cubre"><option value="todos"${f==='todos'?' selected':''}>Todos los meses</option>${opts.map(o=>`<option value="${o}"${o===f?' selected':''}>${esc(pLabel(o))}</option>`).join('')}</select>
   <button class="btn primary" data-act="pago">+ Registrar pago</button><button class="btn" data-act="export">Exportar a Excel</button></div>
-  ${list.length?`<div class="ptable">${list.map(x=>{const t=tenantById(x.inquilino_id);return `<button class="prow" data-act="pagoVer" data-id="${esc(x.id)}"><span class="minitag">${roomNo(x.habitacion)}</span><span class="who"><b>${esc(t?t.nombre:'Inquilino eliminado')}</b><small>${fmtS(x.fecha)} · ${esc(x.metodo||'')} · ${esc(pLabel(x.periodo))}${x.firmado_por?' · ✓ '+esc(x.firmado_por.split(' ')[0]):''}</small></span><span class="amt num">${money(x.monto)}</span></button>`}).join('')}
-  <div class="total"><span>Total (${list.length} pagos)</span><span class="num">${money(tot)}</span></div></div>`
+  ${list.length?`<div class="ptable">${list.map(x=>{const t=tenantById(x.inquilino_id);return `<button class="prow" data-act="pagoVer" data-id="${esc(x.id)}"><span class="minitag">${roomNo(x.habitacion)}</span><span class="who"><b>${esc(t?t.nombre:'Inquilino eliminado')}</b><small>${fmtS(x.fecha)} · ${esc(x.metodo||'')} · ${esc(pLabel(x.periodo))}${x.estado==='firmado'&&x.firmado_por?' · ✓ '+esc(x.firmado_por.split(' ')[0]):''}</small>${tagEstado(x)}</span><span class="amt num"${esFirmado(x)?'':' style="opacity:.55;text-decoration:'+(x.estado==='rechazado'?'line-through':'none')+'"'}>${money(x.monto)}</span></button>`}).join('')}
+  <div class="total"><span>Total firmado (${nf} pagos${list.length>nf?' · '+(list.length-nf)+' sin firmar':''})</span><span class="num">${money(tot)}</span></div></div>`
   :`<div class="empty">No hay pagos registrados${f==='todos'?'':' para '+esc(pLabel(f))}. Toca “Registrar pago” para anotar el primero.</div>`}
   </div>`;
 };
@@ -506,7 +549,7 @@ function tenantSheet(tid,keepScroll){
   recompute();
   const st=ST.get(t.id),pagos=S.pagos.filter(x=>x.inquilino_id===t.id).sort((a,b)=>b.periodo.localeCompare(a.periodo)||(b.fecha||'').localeCompare(a.fecha||''));
   const notas=S.notas.filter(x=>x.inquilino_id===t.id).sort((a,b)=>b.fecha.localeCompare(a.fecha)||(b.creado||'').localeCompare(a.creado||''));
-  const lastPago=pagos[0];
+  const lastPago=pagos.find(esFirmado);
   let body='';
   if(st){
     body+=`<div class="debt s-${st.estado}">${pill(st.estado,statusText(st))}
@@ -529,7 +572,7 @@ function tenantSheet(tid,keepScroll){
    ${notas.length>1?`<div class="row" style="margin-top:8px"><button class="btn small danger" data-act="delNotas" data-id="${esc(t.id)}">Borrar todas las notas</button></div>`:''}`:`<div class="empty">Sin notas. Anota aquí cambios, incidentes o acuerdos con el inquilino.</div>`}`;
   // Pagos
   body+=`<div class="sec-h" style="margin:18px 0 8px"><h3>Pagos</h3><span class="muted" style="font-size:13px">${pagos.length}</span></div>`;
-  body+=pagos.length?`<div class="hist">${pagos.map(x=>`<button data-act="pagoVer" data-id="${esc(x.id)}"><span class="m">${esc(pLabel(x.periodo))}</span><span class="a num">${money(x.monto)}</span><small>${fmtS(x.fecha)} · ${esc(x.metodo||'')}</small><small>${x.comprobante?'con comprobante':''}</small></button>`).join('')}</div>`:`<div class="empty">Sin pagos registrados.</div>`;
+  body+=pagos.length?`<div class="hist">${pagos.map(x=>`<button data-act="pagoVer" data-id="${esc(x.id)}"><span class="m">${esc(pLabel(x.periodo))}</span><span class="a num">${money(x.monto)}</span><small>${fmtS(x.fecha)} · ${esc(x.metodo||'')}</small><small>${tagEstado(x)||(x.comprobante?'con comprobante':'')}</small></button>`).join('')}</div>`:`<div class="empty">Sin pagos registrados.</div>`;
   body+=`<div class="row" style="margin-top:16px"><button class="btn" data-act="tenantForm" data-id="${esc(t.id)}">Editar datos</button>${t.activo?`<button class="btn danger" data-act="retirar" data-id="${esc(t.id)}">Registrar salida</button>`:''}${!pagos.length?`<button class="btn danger" data-act="delTenant" data-id="${esc(t.id)}">Eliminar registro</button>`:''}</div>`;
   openSheet(sheetHead(esc(t.nombre),t.activo?'Habitación '+roomNo(t.habitacion):'Ex inquilino · estuvo en la habitación '+roomNo(t.habitacion))+body);
   if(prevScroll)document.querySelector('.sheet').scrollTop=prevScroll;
@@ -552,7 +595,7 @@ function tenantForm(tid,roomNum){
    <div class="grid2"><div class="field"><label for="t-ing">Fecha de ingreso</label><input id="t-ing" type="date" required value="${esc(ing)}"></div>
    <div class="field"><label for="t-dia">Día de pago</label><input id="t-dia" type="number" min="1" max="31" required inputmode="numeric" value="${esc(t?t.dia_pago:+ing.slice(8))}"></div></div>
    <div class="field"><label for="t-gar">Garantía (S/)</label><input id="t-gar" type="number" min="0" step="0.01" inputmode="decimal" value="${esc(t&&+t.garantia?t.garantia:'')}" placeholder="0"></div>
-   ${t?'':`<div class="field"><label for="t-met">Pago del primer mes</label><select id="t-met">${METODOS.map(m=>`<option>${m}</option>`).join('')}</select><span class="hint">El primer mes se registra como pagado, por el monto mensual y con la fecha de ingreso.</span></div>${pinCampo('t-pin','PIN para firmar el primer pago')}`}
+   ${t?'':`<div class="field"><label for="t-met">Pago del primer mes</label><select id="t-met">${METODOS.map(m=>`<option>${m}</option>`).join('')}</select><span class="hint">El primer mes se registra como pagado, por el monto mensual y con la fecha de ingreso.</span></div>${atendidoCampo('t-at')}${pinCampo('t-pin','PIN para firmar el primer pago (opcional)',true)}`}
    <div class="field"><label for="t-notas">Datos extra</label><textarea id="t-notas" placeholder="Contacto de emergencia, referencias…">${esc(t?t.notas:'')}</textarea><span class="hint">Para incidentes con fecha usa la bitácora de su ficha.</span></div>
    <button class="btn primary" id="t-save">${t?'Guardar cambios':'Registrar inquilino'}</button></form>`,t?null:'#t-dni');
 }
@@ -581,16 +624,32 @@ function pagoForm(tid,periodo){
    <div class="field"><label for="p-met">Método</label><select id="p-met">${METODOS.map(m=>`<option>${m}</option>`).join('')}</select></div>
    <div class="field"><label for="p-nota">Nota</label><input id="p-nota" placeholder="Opcional"></div>
    <div class="field"><label for="p-foto">Foto del comprobante</label><input id="p-foto" type="file" accept="image/*"><span class="hint">Opcional. Por ejemplo, la captura del Yape.</span></div>
-   ${pinCampo('p-pin','PIN para firmar el pago')}
-   <button class="btn primary" id="p-save">Firmar y guardar pago</button></form>`);
+   ${atendidoCampo('p-at')}
+   ${pinCampo('p-pin','PIN para firmar ahora (opcional)',true)}
+   <button class="btn primary" id="p-save">Guardar pago</button></form>`);
+}
+// Hoja para firmar o rechazar un pago por firmar (pide el PIN aunque la app esté abierta)
+function firmaSheet(id,rechazo){
+  const x=S.pagos.find(p=>p.id===id);if(!x)return;
+  const t=tenantById(x.inquilino_id);
+  openSheet(sheetHead(rechazo?'Rechazar pago':'Firmar pago',esc(money(x.monto)+' · '+(t?t.nombre:'')+' · '+pLabel(x.periodo)))+
+   `<form class="stack" data-form="firma" data-id="${esc(x.id)}" data-rechazo="${rechazo?1:''}">
+    <p class="muted" style="margin:0">${rechazo?'El pago no contará y quedará como rechazado.':'Al firmarlo, el pago cuenta en la deuda del inquilino.'}</p>
+    ${rechazo?'<div class="field"><label for="f-mot">Motivo</label><textarea id="f-mot" maxlength="200" required placeholder="Ej. El Yape no llegó"></textarea></div>':''}
+    ${pinCampo('f-pin',rechazo?'Tu PIN para rechazar':'Tu PIN para firmar')}
+    <div class="row"><button type="button" class="btn" data-act="pagoVer" data-id="${esc(x.id)}">Cancelar</button><button class="btn ${rechazo?'danger':'primary'}" id="f-ok">${rechazo?'Rechazar':'Firmar'}</button></div>
+   </form>`,rechazo?'#f-mot':'#f-pin');
 }
 function pagoSheet(id){
   const x=S.pagos.find(p=>p.id===id);if(!x)return;
   const t=tenantById(x.inquilino_id);
   openSheet(sheetHead(money(x.monto),esc((t?t.nombre:'Inquilino eliminado')+' · Habitación '+roomNo(x.habitacion)))+
-   `<dl class="kv" style="margin:0 0 14px"><dt>Mes que cubre</dt><dd style="text-transform:capitalize">${esc(pLabel(x.periodo))}</dd><dt>Fecha</dt><dd>${fmtS(x.fecha)}</dd><dt>Método</dt><dd>${esc(x.metodo||'—')}</dd>${x.nota?`<dt>Nota</dt><dd style="font-weight:400">${esc(x.nota)}</dd>`:''}<dt>Firmado por</dt><dd>${x.firmado_por?esc(x.firmado_por)+(x.firmado_en?' · '+fmtHora(x.firmado_en):''):'Sin firma (registrado antes del PIN)'}</dd></dl>
+   `<dl class="kv" style="margin:0 0 14px"><dt>Mes que cubre</dt><dd style="text-transform:capitalize">${esc(pLabel(x.periodo))}</dd><dt>Fecha</dt><dd>${fmtS(x.fecha)}</dd><dt>Método</dt><dd>${esc(x.metodo||'—')}</dd>${x.nota?`<dt>Nota</dt><dd style="font-weight:400">${esc(x.nota)}</dd>`:''}${x.atendido_por?`<dt>Atendió</dt><dd>${esc(x.atendido_por)}</dd>`:''}
+   <dt>Estado</dt><dd>${x.estado==='por_firmar'?tagEstado(x):x.estado==='rechazado'?tagEstado(x)+(x.firmado_por?' por '+esc(x.firmado_por):''):x.firmado_por?'✓ Firmado por '+esc(x.firmado_por)+(x.firmado_en?' · '+fmtHora(x.firmado_en):''):'Firmado (registrado antes del PIN)'}</dd>
+   ${x.estado==='rechazado'&&x.motivo?`<dt>Motivo</dt><dd style="font-weight:400">${esc(x.motivo)}</dd>`:''}</dl>
    ${x.comprobante?`<div id="pv-img" class="muted" style="margin-bottom:14px">Cargando comprobante…</div>`:''}
-   <div class="row">${t&&t.activo?waBtn(t,'gracias','Enviar confirmación',x):''}<button class="btn danger" data-act="delPago" data-id="${esc(x.id)}">Eliminar pago</button></div>`);
+   ${x.estado==='por_firmar'?`<div class="row" style="margin-bottom:10px"><button class="btn primary" data-act="firmar" data-id="${esc(x.id)}">Firmar</button><button class="btn danger" data-act="rechazar" data-id="${esc(x.id)}">Rechazar</button></div><div class="row" style="margin-bottom:10px">${avisoFirmaBtn(x)}</div>`:''}
+   <div class="row">${t&&t.activo&&esFirmado(x)?waBtn(t,'gracias','Enviar confirmación',x):''}<button class="btn danger" data-act="delPago" data-id="${esc(x.id)}">Eliminar pago</button></div>`);
   if(x.comprobante)sb.storage.from('comprobantes').createSignedUrl(x.comprobante,3600).then(({data,error})=>{
     const el=$('pv-img');if(!el)return;
     if(error||!data){el.textContent='No se pudo cargar el comprobante.';return}
@@ -643,34 +702,41 @@ const FORMS={
       monto:r2(val('t-monto')),fecha_ingreso:val('t-ing'),dia_pago:Math.min(31,Math.max(1,parseInt(val('t-dia'))||1)),
       garantia:r2(val('t-gar')),notas:val('t-notas')};
     if(!d.nombre||!d.fecha_ingreso||!d.habitacion){toast('Completa nombre, habitación y fecha de ingreso.');return}
-    const pin=old?'':pinVal('t-pin');
-    if(!old&&d.monto>0&&pin.length<6){pinMal('t-pin','Escribe el PIN para firmar el primer pago (6 números).');return}
+    const pin=old?'':pinVal('t-pin'),atendido=old?'':val('t-at');
+    if(!old&&d.monto>0&&pin&&pin.length<6){pinMal('t-pin','El PIN tiene 6 números (o déjalo vacío para que quede por firmar).');return}
+    if(!old&&d.monto>0&&!pin&&!atendido){toast('Escribe quién atendió.');$('t-at').focus();return}
+    if(atendido)lsSet('hc-atendido',atendido);
     const btn=$('t-save');btn.disabled=true;
     const row=old?await run(sb.from('inquilinos').update(d).eq('id',id).select().single(),'Datos guardados')
                  :await run(sb.from('inquilinos').insert(d).select().single());
     if(row&&row!==true){
-      // Nadie se registra sin pagar: el primer mes queda pagado y firmado
+      // Nadie se registra sin pagar: el primer mes queda pagado (firmado si pusieron PIN; si no, por firmar)
+      let primero=null;
       if(!old&&d.monto>0){
         const r=await rpc('registrar_pago',{p_pin:pin,p_inquilino:row.id,p_periodo:d.fecha_ingreso.slice(0,7),p_monto:d.monto,
-          p_fecha:d.fecha_ingreso,p_metodo:val('t-met')||'Efectivo',p_nota:'Primer mes, al registrar',p_comprobante:null});
+          p_fecha:d.fecha_ingreso,p_metodo:val('t-met')||'Efectivo',p_nota:'Primer mes, al registrar',p_comprobante:null,p_atendido:atendido});
         if(!r.pago){
-          // Sin firma no queda registrado: se deshace el inquilino para reintentar con el PIN correcto
+          // Si el PIN falló no queda nada a medias: se deshace el inquilino para reintentar
           await sb.from('inquilinos').delete().eq('id',row.id);
           btn.disabled=false;pinMal('t-pin',r.error||'No se pudo registrar el primer pago.');return;
         }
-        upsertLocal('pagos',r.pago);
-        toast('Inquilino registrado · primer pago firmado por '+r.pago.firmado_por);
+        primero=r.pago;upsertLocal('pagos',primero);
+        toast(esFirmado(primero)?'Inquilino registrado · primer pago firmado por '+primero.firmado_por:'Inquilino registrado · primer pago por firmar');
       }else if(!old)toast('Inquilino registrado');
       upsertLocal('inquilinos',row);
-      await actualizarEstados();render();tenantSheet(row.id);
+      await actualizarEstados();render();
+      if(primero&&!esFirmado(primero))return pagoRegistrado(primero);
+      tenantSheet(row.id);
     }
     btn.disabled=false;
   },
   async pago(){
     const tid=val('p-inq'),t=tenantById(tid),monto=r2(val('p-monto'));
     if(!t||!val('p-per')||!(monto>0)||!val('p-fecha')){toast('Completa inquilino, mes, monto y fecha.');return}
-    const pin=pinVal('p-pin');
-    if(pin.length<6){pinMal('p-pin','Escribe el PIN de quien firma (6 números).');return}
+    const pin=pinVal('p-pin'),atendido=val('p-at');
+    if(pin&&pin.length<6){pinMal('p-pin','El PIN tiene 6 números (o déjalo vacío para que quede por firmar).');return}
+    if(!pin&&!atendido){toast('Escribe quién atendió.');$('p-at').focus();return}
+    if(atendido)lsSet('hc-atendido',atendido);
     const btn=$('p-save'),f=btn.form;btn.disabled=true;btn.textContent='Guardando…';
     // La foto se sube una sola vez aunque el PIN se equivoque y se reintente
     let comprobante=f.dataset.foto||null;
@@ -681,11 +747,24 @@ const FORMS={
       if(error)toast('No se pudo subir la foto. Se guardará el pago sin ella.');else comprobante=f.dataset.foto=path;
     }
     const d={inquilino_id:tid,habitacion:t.habitacion,periodo:val('p-per'),monto,fecha:val('p-fecha'),metodo:val('p-met'),nota:val('p-nota'),comprobante};
-    const r=await rpc('registrar_pago',{p_pin:pin,p_inquilino:tid,p_periodo:d.periodo,p_monto:monto,p_fecha:d.fecha,p_metodo:d.metodo,p_nota:d.nota,p_comprobante:comprobante});
-    if(!r.pago){btn.disabled=false;btn.textContent='Firmar y guardar pago';pinMal('p-pin',r.error||'No se pudo guardar.');return}
+    const r=await rpc('registrar_pago',{p_pin:pin,p_inquilino:tid,p_periodo:d.periodo,p_monto:monto,p_fecha:d.fecha,p_metodo:d.metodo,p_nota:d.nota,p_comprobante:comprobante,p_atendido:atendido});
+    if(!r.pago){btn.disabled=false;btn.textContent='Guardar pago';pinMal('p-pin',r.error||'No se pudo guardar.');return}
     const row=r.pago;
-    upsertLocal('pagos',row);await actualizarEstados();render();toast('Pago firmado por '+row.firmado_por);
-    openSheet(sheetHead('Pago registrado')+`<p style="margin:0 0 16px">${money(monto)} de <b>${esc(t.nombre)}</b> por ${esc(pLabel(d.periodo))}.</p><div class="row">${waBtn(t,'gracias','Enviar confirmación',row)}<button class="btn" data-act="close">Listo</button></div>`);
+    upsertLocal('pagos',row);await actualizarEstados();render();
+    pagoRegistrado(row);
+  },
+  async firma(f){
+    const id=f.dataset.id,rechazo=!!f.dataset.rechazo,motivo=rechazo?val('f-mot'):'',pin=pinVal('f-pin');
+    if(rechazo&&motivo.length<3){toast('Escribe el motivo del rechazo.');$('f-mot').focus();return}
+    if(pin.length<6){pinMal('f-pin','Escribe tu PIN (6 números).');return}
+    const b=$('f-ok');b.disabled=true;
+    const r=await rpc('firmar_pago',{p_pin:pin,p_id:id,p_rechazar:rechazo,p_motivo:motivo});
+    if(!r.pago){b.disabled=false;pinMal('f-pin',r.error||'No se pudo firmar.');if(/ya está firmado|fue rechazado/.test(r.error||''))setTimeout(()=>pagoSheet(id),1200);return}
+    upsertLocal('pagos',r.pago);await actualizarEstados();render();
+    const x=r.pago,t=tenantById(x.inquilino_id);
+    if(rechazo){toast('Pago rechazado por '+x.firmado_por);closeSheet();return}
+    toast('Pago firmado por '+x.firmado_por);
+    openSheet(sheetHead('Pago firmado ✓')+`<p style="margin:0 0 16px">${money(x.monto)} de <b>${esc(t?t.nombre:'')}</b> por ${esc(pLabel(x.periodo))}. Ya cuenta en su deuda.</p><div class="row">${t?waBtn(t,'gracias','Enviar confirmación al inquilino',x):''}<button class="btn" data-act="close">Listo</button></div>`);
   },
   async nota(f){
     const tid=f.dataset.id,texto=val('n-texto'),fecha=val('n-fecha')||HOY;
@@ -705,6 +784,8 @@ const ACTS={
   tenantForm(b){tenantForm(b.dataset.id,b.dataset.room)},
   pago(b){pagoForm(b.dataset.id,b.dataset.periodo)},
   pagoVer(b){pagoSheet(b.dataset.id)},
+  firmar(b){firmaSheet(b.dataset.id,false)},
+  rechazar(b){firmaSheet(b.dataset.id,true)},
   close(){closeSheet()},
   // Si la acción devuelve 'seguir' (p. ej. PIN incorrecto) la hoja sigue abierta para reintentar
   async confirmYes(b){const f=CONFIRM;CONFIRM=null;if(!f)return;b.disabled=true;let r;try{r=await f()}finally{if(b.isConnected)b.disabled=false}if(r==='seguir')CONFIRM=f},
@@ -805,7 +886,7 @@ async function exportar(){
   try{await loadXLSX()}catch(e){toast('No se pudo preparar el Excel. Revisa tu conexión.');return}
   recompute();
   const X=window.XLSX,wb=X.utils.book_new();
-  const pagos=[...S.pagos].sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).map(x=>{const t=tenantById(x.inquilino_id);return {'Fecha':fmtS(x.fecha),'Mes que cubre':pLabel(x.periodo),'Habitación':roomNo(x.habitacion),'Inquilino':t?t.nombre:'','Monto (S/)':+x.monto||0,'Método':x.metodo||'','Nota':x.nota||'','Firmado por':x.firmado_por||'Sin firma'}});
+  const pagos=[...S.pagos].sort((a,b)=>(a.fecha||'').localeCompare(b.fecha||'')).map(x=>{const t=tenantById(x.inquilino_id);return {'Fecha':fmtS(x.fecha),'Mes que cubre':pLabel(x.periodo),'Habitación':roomNo(x.habitacion),'Inquilino':t?t.nombre:'','Monto (S/)':+x.monto||0,'Método':x.metodo||'','Nota':x.nota||'','Atendió':x.atendido_por||'','Estado':x.estado==='por_firmar'?'Por firmar':x.estado==='rechazado'?'Rechazado':'Firmado','Firmado por':x.firmado_por||''}});
   const inq=[...S.tenants].sort((a,b)=>a.habitacion-b.habitacion).map(t=>{const st=ST.get(t.id);return {'Habitación':roomNo(t.habitacion),'Nombre':t.nombre,'DNI':t.dni||'','Celular':t.celular||'','Ingreso':fmtS(t.fecha_ingreso),'Día de pago':+t.dia_pago,'Monto (S/)':+t.monto||0,'Garantía (S/)':+t.garantia||0,'Estado':st?statusText(st):'Retirado','Deuda (S/)':st?st.deuda:0,'Salida':t.fecha_salida?fmtS(t.fecha_salida):''}});
   const notas=[...S.notas].sort((a,b)=>a.fecha.localeCompare(b.fecha)).map(n=>{const t=tenantById(n.inquilino_id);return {'Fecha':fmtS(n.fecha),'Habitación':t?roomNo(t.habitacion):'','Inquilino':t?t.nombre:'','Nota':n.texto,'Anotado por':perfilNombre(n.autor)}});
   X.utils.book_append_sheet(wb,X.utils.json_to_sheet(pagos.length?pagos:[{'Fecha':'Sin pagos'}]),'Pagos');
@@ -818,7 +899,7 @@ async function exportar(){
    VERSIÓN: si se publicó una nueva, este dispositivo se recarga solo
    (para que ningún celular se quede con la app vieja)
    ============================================================ */
-const VERSION='20261111a';
+const VERSION='20261111b';
 async function revisarVersion(){
   try{
     const r=await fetch('version.txt?t='+Date.now(),{cache:'no-store'});
