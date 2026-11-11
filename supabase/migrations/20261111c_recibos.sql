@@ -1,7 +1,7 @@
 -- Aplicado en Supabase el 11/11/2026. Registro de referencia.
 -- Recibos de pago de Habitaciones (Sueño Feliz):
 --  * Correlativo PROPIO (recibo_seq), independiente de Separaciones. Se asigna solo cuando el pago queda FIRMADO
---    (los por firmar y rechazados no gastan número). Los pagos firmados que ya existían se numeran por fecha de pago.
+--    (los por firmar y rechazados no gastan número). Los pagos anteriores al 11/11/2026 no tienen número; el primero es el 1.
 --  * Código validador por pago (10 caracteres) que va en el QR del recibo.
 --  * verificar_recibo(código): página pública verificar.html confirma si el recibo es auténtico (datos mínimos).
 
@@ -20,10 +20,8 @@ $$;
 alter table public.pagos alter column codigo set default public.codigo_recibo();
 update public.pagos set codigo = public.codigo_recibo() where codigo is null;
 
--- Pagos firmados que ya existían: número por fecha de pago
-with o as (select id, row_number() over (order by fecha, creado) n from public.pagos where estado = 'firmado' and numero is null)
-update public.pagos p set numero = o.n from o where p.id = o.id;
-select setval('public.recibo_seq', coalesce((select max(numero) from public.pagos), 0) + 1, false);
+-- Los recibos empiezan con este cambio: los pagos anteriores quedan sin número (sin recibo) y el primero será el N° 000001
+select setval('public.recibo_seq', 1, false);
 
 create or replace function public.tg_pago_numero() returns trigger
 language plpgsql security definer set search_path to '' as $$
