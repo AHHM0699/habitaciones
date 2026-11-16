@@ -1,5 +1,6 @@
-// Consulta DNI para la app. Claves en Secrets de Supabase (nunca en el repo, que es público):
-//   ENDPOINTPE_TOKEN (principal, gratis 150/mes)  ·  APIINTI_TOKEN (respaldo, gratis 100/mes)
+// Consulta DNI para la app. Claves en el Vault de Supabase (nunca en el repo, que es público):
+//   dni_endpointpe (principal, gratis 150/mes)  ·  dni_apiinti (respaldo, gratis 100/mes)
+// Se leen con la RPC public.dni_claves(), que solo puede ejecutar service_role.
 // Antes de gastar una consulta se busca el DNI entre los inquilinos ya registrados.
 import { createClient } from "npm:@supabase/supabase-js@2.117.3";
 
@@ -12,8 +13,8 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 
 const PROVEEDORES = [
-  { env: "ENDPOINTPE_TOKEN", url: "https://api.endpoint.pe/v1/dni/" },
-  { env: "APIINTI_TOKEN", url: "https://app.apiinti.dev/api/v1/dni/" },
+  { vault: "dni_endpointpe", url: "https://api.endpoint.pe/v1/dni/" },
+  { vault: "dni_apiinti", url: "https://app.apiinti.dev/api/v1/dni/" },
 ];
 
 // deno-lint-ignore no-explicit-any
@@ -48,7 +49,10 @@ Deno.serve(async (req) => {
   const { data: previo } = await sb.from("inquilinos").select("nombre").eq("dni", dni).limit(1).maybeSingle();
   if (previo?.nombre) return json({ dni, nombre_completo: previo.nombre, fuente: "inquilino" });
 
-  const provs = PROVEEDORES.map((p) => ({ ...p, t: Deno.env.get(p.env) })).filter((p) => p.t);
+  const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const { data: claves } = await admin.rpc("dni_claves");
+  const mapa = new Map((claves ?? []).map((c: { proveedor: string; clave: string }) => [c.proveedor, c.clave] as [string, string]));
+  const provs = PROVEEDORES.map((p) => ({ ...p, t: mapa.get(p.vault) })).filter((p) => p.t);
   if (!provs.length) return json({ error: "sin_token" }, 503);
 
   let agotados = 0, caidos = 0;
