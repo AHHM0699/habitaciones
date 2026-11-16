@@ -876,9 +876,9 @@ const ACTS={
     const b=$('t-dni-btn');b.disabled=true;b.textContent='Buscando…';
     const r=await fn('dni',{dni});
     b.disabled=false;b.textContent='Buscar';
-    if(r.error){toast({sin_token:'La búsqueda por DNI aún no está activada.',no_encontrado:'No se encontró ese DNI.',dni_invalido:'El DNI debe tener 8 números.',servicio_caido:'El servicio de DNI no responde. Escribe el nombre a mano.'}[r.error]||'No se pudo buscar el DNI.');return}
+    if(r.error){toast({sin_token:'La búsqueda por DNI aún no está activada.',no_encontrado:'No se encontró ese DNI.',dni_invalido:'El DNI debe tener 8 números.',servicio_caido:'El servicio de DNI no responde. Escribe el nombre a mano.',agotado:'Se acabaron las consultas DNI gratis del mes. Escribe el nombre a mano.'}[r.error]||'No se pudo buscar el DNI.');return}
     const nombre=titleCase([r.nombres,r.apellido_paterno,r.apellido_materno].filter(Boolean).join(' ')||r.nombre_completo);
-    $('t-nombre').value=nombre;toast('Nombre encontrado');$('t-cel').focus();
+    $('t-nombre').value=nombre;toast(r.fuente==='inquilino'?'Ya fue inquilino: nombre cargado':'Nombre encontrado');$('t-cel').focus();
   },
   addRoom(){const n=S.rooms.reduce((m,r)=>Math.max(m,r.numero),0)+1;
     run(sb.from('habitaciones').insert({numero:n,precio:r2(cfg().precio_base)}).select().single(),'Habitación '+pad(n)+' agregada').then(row=>{if(row&&row!==true){upsertLocal('habitaciones',row);render()}})},
