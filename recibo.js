@@ -1,6 +1,7 @@
 'use strict';
 // Recibo de pago de Sueño Feliz en PDF, tipo ticket de 80 mm (ticketera térmica). Se genera en el teléfono.
 // Corto a propósito: un solo pago por recibo, correlativo propio (pagos.numero) y QR que valida el recibo.
+// Un pago de varios meses llega ya juntado (pago.filas = una fila por mes, pago.hasta = último mes) y sale en un solo recibo.
 const Recibo = (() => {
   const LOGO = { src: 'logos/suenofeliz-ticket.png', w: 894, h: 738, ancho: 36 };
   const PIE = 'Canjee este recibo por su BOLETA DE VENTA. Este documento no es un comprobante de pago con valor tributario.';
@@ -65,7 +66,7 @@ const Recibo = (() => {
     return { mes: `${MESES[m - 1]} ${y}`, ini, fin };
   }
 
-  /** pago: fila de pagos (firmada). inq: su inquilino. base: URL de la app. Devuelve { blob, nombre, titulo }. */
+  /** pago: fila de pagos (firmada), o el resumen de un pago de varios meses. inq: su inquilino. base: URL de la app. Devuelve { blob, nombre, titulo }. */
   async function generar(pago, inq, base) {
     if (!pago || (pago.estado && pago.estado !== 'firmado')) throw new Error('El recibo se habilita cuando se firme el pago');
     if (!pago.numero || !pago.codigo) throw new Error('Este pago aún no tiene número de recibo. Vuelve a abrir la app.');
@@ -74,6 +75,8 @@ const Recibo = (() => {
     let img = null;
     try { img = await logo(); } catch { /* sale sin logo */ }
     const per = periodo(pago.periodo, inq && inq.dia_pago, inq && inq.fecha_ingreso);
+    const filas = Array.isArray(pago.filas) && pago.filas.length > 1 ? pago.filas : null;
+    const perFin = filas ? periodo(pago.hasta || filas[filas.length - 1].periodo, inq && inq.dia_pago, inq && inq.fecha_ingreso) : per;
     const numero = `N° ${String(pago.numero).padStart(6, '0')}`;
     const url = `${base}verificar.html?c=${pago.codigo}`;
     const qr = window.qrcode(0, 'M'); qr.addData(url); qr.make();
@@ -116,9 +119,14 @@ const Recibo = (() => {
       if (inq && inq.dni) centro(`DNI ${inq.dni}`, 'normal', 8);
       y += 0.5;
       par('Habitación', `N° ${pad(pago.habitacion)}`);
-      par('Mes', per.mes);
+      if (filas) {
+        par('Meses', String(filas.length));
+        for (const f of filas) par(periodo(f.periodo, inq && inq.dia_pago, inq && inq.fecha_ingreso).mes, soles(f.monto), false, 8);
+      } else {
+        par('Mes', per.mes);
+      }
       par('Desde', fecha(per.ini));
-      par('Hasta', fecha(per.fin));
+      par('Hasta', fecha(perFin.fin));
 
       // ----- Pago -----
       linea();
